@@ -197,8 +197,10 @@ def test_pipeline_completo(cfg_sintetico):
     assert not (res.desfecho == "adm_aprendiz").loc[res.modelo.str.startswith("tripla")].any()
     modelos.rodar_heterogeneidade(cfg)
     rob = modelos.rodar_robustez(cfg)
-    print(rob[rob.termo == "treat_post"][["variante", "coef", "ep"]].round(3).to_string(index=False))
-    assert rob.variante.nunique() >= 13
+    print(rob[rob.termo == "treat_post"][["grupo", "variante", "coef", "ep"]].round(3).to_string(index=False))
+    assert rob.variante.nunique() >= 14 and set(rob.grupo) == {"18_24", "25_29"}
+    r2529 = rob[(rob.grupo == "25_29") & (rob.variante == "principal") & (rob.termo == "treat_post")].coef.iloc[0]
+    assert abs(r2529) < 0.12, "25–29 sem efeito no DGP"
     pnad.rodar(cfg)
     out = Path(cfg["_caminhos"]["outputs"])
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",

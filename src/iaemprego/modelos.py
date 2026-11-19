@@ -348,20 +348,25 @@ def rodar_principal(cfg):
     return res
 
 
+GRUPOS = {"jovem": "18_24", "jovem_25_29": "25_29"}  # grupos tratados nas robustezes e na heterogeneidade
+
+
 def rodar_heterogeneidade(cfg):
     het = pd.read_parquet(caminho(cfg, "processed", "painel_heterogeneidade.parquet"))
     res = []
-    for (dim, valor), d in het.groupby(["dim", "valor"]):
-        df = preparar(cfg, d)
-        for y in ("adm", "adm_sup", "adm_base"):
-            try:
-                t = triple(cfg, df, y, efeitos=FE_SEM_UF, pooled=True)
-            except Exception as e:  # subamostra pequena demais
-                log.warning("heterogeneidade %s=%s %s: %s", dim, valor, y, e)
-                continue
-            if t is not None:
-                t["dim"], t["valor"] = dim, valor
-                res.append(t)
+    for chave, grupo in GRUPOS.items():
+        for (dim, valor), d in het.groupby(["dim", "valor"]):
+            df = preparar(cfg, d, jovem_chave=chave)
+            for y in ("adm", "adm_sup", "adm_base"):
+                try:
+                    t = triple(cfg, df, y, efeitos=FE_SEM_UF, pooled=True)
+                except Exception as e:  # subamostra pequena demais
+                    log.warning("heterogeneidade %s %s=%s %s: %s", grupo, dim, valor, y, e)
+                    continue
+                if t is not None:
+                    t["dim"], t["valor"], t["grupo"] = dim, valor, grupo
+                    res.append(t)
+            log.info("heterogeneidade %s: %s=%s ok", grupo, dim, valor)
     out = pd.concat(res)
     out.to_csv(caminho(cfg, "outputs", "tabelas", "heterogeneidade.csv"), index=False)
     return out
@@ -379,6 +384,8 @@ def rodar_robustez(cfg):
         ("ate_2026T2", base_p[base_p.t <= 20262], {}, {}),   # sem o último trimestre (ajustes FOR/EXC incompletos)
         ("sem_controles_pandemia", base_p, {}, {"controles": False}),
         ("serie_completa_fe_fase", base_p, {}, {"inicio": ini_serie, "fase_fe": True}),
+        # event study 2020T1+ sem controles: coeficientes de 2020–2022 = teste de pré-tendência longo
+        ("serie_completa_event", base_p, {}, {"inicio": ini_serie, "controles": False}),
         ("incluir_2021_fe_fase", base_p, {}, {"inicio": 20211, "fase_fe": True}),
         ("base_2023", base_p, {"inicio_pos": b23["inicio_pos"]}, {"inicio": b23["inicio"], "ref": b23["referencia"]}),
         ("so_1o_semestre", so1s, {"inicio_pos": 2023}, {"inicio": 2022, "ref": 2022, "efeitos": E}),
@@ -392,24 +399,34 @@ def rodar_robustez(cfg):
                           ("sem_ajustes_so_MOV", dict(somente_mov=True))):
         var.append((nome, P.construir(cfg, nome=nome, **filtros), {}, {}))
     res = []
-    for nome, painel, kp, kt in var:
-        df = preparar(cfg, painel, **kp)
-        if nome == "so_1o_semestre":
-            df["post"] = (df.t >= 2023).astype(int)
-            df["treat_post"] = df.treat * df.post
-            df["fase"] = "pos"
-        for pooled in (True, False):
-            try:
-                t = triple(cfg, df, "adm", pooled=pooled, **kt)
-            except Exception as e:
-                log.warning("robustez %s (pooled=%s): %s", nome, pooled, e)
-                continue
-            if t is not None:
-                t["variante"] = nome
-                res.append(t)
-                if not pooled and nome in ("base_2023", "so_1o_semestre", "serie_completa_fe_fase"):
-                    grafico_event(cfg, t, f"Robustez: {nome}", f"event_robustez_{nome}.png", ref=kt.get("ref"))
-        log.info("robustez %s ok", nome)
+    for chave, grupo in GRUPOS.items():
+        for nome, painel, kp, kt in var:
+            kp = dict(kp)
+            if "jovem_chave" in kp:
+                if chave != "jovem":  # "jovem_18_29" só faz sentido como variante do grupo 18–24
+                    continue
+            else:
+                kp["jovem_chave"] = chave
+            df = preparar(cfg, painel, **kp)
+            if nome == "so_1o_semestre":
+                df["post"] = (df.t >= 2023).astype(int)
+                df["treat_post"] = df.treat * df.post
+                df["fase"] = "pos"
+            for pooled in (True, False):
+                try:
+                    t = triple(cfg, df, "adm", pooled=pooled, **kt)
+                except Exception as e:
+                    log.warning("robustez %s %s (pooled=%s): %s", grupo, nome, pooled, e)
+                    continue
+                if t is not None:
+                    t["variante"], t["grupo"] = nome, grupo
+                    res.append(t)
+                    if not pooled and nome in ("base_2023", "so_1o_semestre", "serie_completa_fe_fase",
+                                               "serie_completa_event"):
+                        rot = grupo.replace("_", "–")
+                        grafico_event(cfg, t, f"Robustez ({rot}): {nome}", f"event_robustez_{grupo}_{nome}.png",
+                                      ref=kt.get("ref"))
+            log.info("robustez %s %s ok", grupo, nome)
     out = pd.concat(res)
     out.to_csv(caminho(cfg, "outputs", "tabelas", "robustez.csv"), index=False)
     return out
