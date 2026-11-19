@@ -62,7 +62,9 @@ def preparar(cfg, painel: pd.DataFrame, expo="expo_z", jovem_chave="jovem", sem_
     df[["choque_z", "boom_z"]] = df[["choque_z", "boom_z"]].fillna(0.0)  # sem medida = média
     if expo == "expo_top":
         df["expo_top"] = (df.expo_quartil == 4).astype(float)
-    jov, adu = cfg["idade"][jovem_chave], cfg["idade"]["adulto"]
+    extra_grupos = {"jovem_25_29": ["25_29"]}  # grupos tratados alternativos (sem mexer no config.yaml)
+    jov = cfg["idade"].get(jovem_chave) or extra_grupos[jovem_chave]
+    adu = cfg["idade"]["adulto"]
     df = df[df.faixa.isin(jov + adu)].copy()
     df["jovem"] = df.faixa.isin(jov).astype(int)
     df["treat"] = df[expo] * df.jovem
@@ -201,10 +203,17 @@ def grafico_dupla(cfg, tab, titulo, arquivo):
     ax.axhline(0, color="0.5", lw=0.8)
     ts = sorted(t.periodo.unique())
     pos = {v: i for i, v in enumerate(ts)}
-    for faixa, g in t.groupby("faixa"):
+    grupos = list(t.groupby("faixa"))
+    for faixa, g in grupos:
         g = g.sort_values("periodo")
-        ax.plot(g.periodo.map(pos), g.coef, marker="o", ms=3, lw=2.2 if faixa == "18_24" else 1.1,
-                label=faixa.replace("_", "–").replace("50mais", "50+"))
+        x = g.periodo.map(pos).to_numpy()
+        rot = faixa.replace("_", "–").replace("50mais", "50+")
+        if len(grupos) == 1:  # uma série: barras de erro
+            ax.errorbar(x, g.coef, yerr=[g.coef - g.ic_inf, g.ic_sup - g.coef], fmt="o-", ms=4, lw=1.2,
+                        capsize=2, color="#1f5fbf", label=rot)
+        else:  # várias: faixa sombreada do IC 95%
+            linha, = ax.plot(x, g.coef, marker="o", ms=3, lw=2.2 if faixa in ("18_24", "25_29") else 1.1, label=rot)
+            ax.fill_between(x, g.ic_inf, g.ic_sup, color=linha.get_color(), alpha=0.10, lw=0)
     marc = [v for v in ts if v % 10 == 1]
     ax.set_xticks([pos[v] for v in marc], [f"{int(v) // 10}T1" for v in marc])
     ax.set_ylabel("coeficiente (log, PPML)")
@@ -288,6 +297,22 @@ def rodar_principal(cfg):
                 if not pooled and controles:
                     grafico_event(cfg, t, f"Jovens 18–24 × exposição à IA: {DESFECHOS[y]}", f"event_{y}.png")
         log.info("modelo principal: %s ok", y)
+    # tripla diferença com 25–29 como grupo tratado (recém-formados entram no mercado formal nessa idade)
+    df2529 = preparar(cfg, painel, jovem_chave="jovem_25_29")
+    for y in ("adm", "adm_sup", "adm_base", "des"):
+        for pooled in (False, True):
+            rot = f"tripla_25_29_{'pooled' if pooled else 'event'}_com_controles"
+            try:
+                t = triple(cfg, df2529, y, pooled=pooled, rotulo=rot)
+            except Exception as e:
+                log.warning("modelo 25–29 %s / %s falhou: %s", y, rot, e)
+                continue
+            if t is None:
+                continue
+            tabs.append(t)
+            if not pooled:
+                grafico_event(cfg, t, f"Jovens 25–29 × exposição à IA: {DESFECHOS[y]}", f"event_25_29_{y}.png")
+        log.info("tripla 25–29: %s ok", y)
     # event study descritivo com toda a série (2020T1+), sem controles: mostra a pandemia no gráfico
     ini = int(cfg["periodo"]["inicio"].replace("-", "")[:4]) * 10 + 1
     try:

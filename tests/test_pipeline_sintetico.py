@@ -190,6 +190,10 @@ def test_pipeline_completo(cfg_sintetico):
     assert -0.22 < dup.loc["18_24"] < -0.08, "dupla 18–24 deveria captar o efeito nos jovens"
     assert abs(dup.loc["30_39"]) < 0.05, "dupla 30–39 deveria ser ~0 (adultos sem efeito)"
     assert (res.modelo == "aprendizes_14_24_pooled").any(), "modelo de aprendizes entre jovens"
+    t2529 = res[(res.modelo == "tripla_25_29_pooled_com_controles") & (res.desfecho == "adm")].coef.iloc[0]
+    ep2529 = res[(res.modelo == "tripla_25_29_pooled_com_controles") & (res.desfecho == "adm")].ep.iloc[0]
+    print(f"tripla 25–29 (sem efeito no DGP): {t2529:.3f} (ep {ep2529:.3f})")
+    assert abs(t2529) < 2.5 * ep2529 + 0.02, "25–29 não tem efeito no DGP"
     assert not (res.desfecho == "adm_aprendiz").loc[res.modelo.str.startswith("tripla")].any()
     modelos.rodar_heterogeneidade(cfg)
     rob = modelos.rodar_robustez(cfg)
@@ -200,6 +204,6 @@ def test_pipeline_completo(cfg_sintetico):
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",
               "tabelas/pnad_desocupacao_faixa_superior.csv", "figuras/event_adm.png",
               "figuras/event_adm_serie_completa.png", "figuras/dupla_por_faixa.png",
-              "figuras/event_aprendizes_14_24.png", "figuras/indice_admissoes_quartil.png",
+              "figuras/event_aprendizes_14_24.png", "figuras/event_25_29_adm.png", "figuras/indice_admissoes_quartil.png",
               "tabelas/desc_indice_trimestral_movel4.csv", "validacao/cobertura_exposicao.csv"):
         assert (out / f).exists(), f
