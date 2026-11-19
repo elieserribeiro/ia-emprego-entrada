@@ -6,7 +6,7 @@ pandemia_cbo4:          choque (abr–jun/2020) e boom (jan–fev/2022) por fam�
 
 Medidas de entrada (contagens de admissões, líquidas de exclusões):
   adm, adm_1emp (primeiro emprego), adm_sup (superior completo+), adm_base (salário real ≤ p25 da família
-  em jan–set/2022), adm_aprendiz; e des (desligamentos). Salários: soma e soma do log do salário real.
+  no próprio trimestre), adm_aprendiz; e des (desligamentos). Salários: soma e soma do log do salário real.
 """
 from __future__ import annotations
 
@@ -58,11 +58,12 @@ def _base(cfg, con: duckdb.DuckDBPyConnection, somente_mov=False, excluir_secoes
                 THEN salario * i.deflator END AS sal_real
     FROM mov_ajustado m LEFT JOIN ipca_df i ON i.ano_mes = m.comp
     WHERE {' AND '.join(filtros)}""")
-    a, b = cfg["periodo"]["meses_pesos"]
-    con.sql(f"""CREATE OR REPLACE TEMP TABLE limiar AS
-                SELECT cbo4, quantile_cont(sal_real, 0.25) AS p25 FROM base
-                WHERE comp BETWEEN {int(a)} AND {int(b)} AND sal_real IS NOT NULL
-                GROUP BY 1 HAVING count(*) >= 30""")
+    # base salarial: p25 do salário de admissão da família CBO no PRÓPRIO trimestre (todas as idades).
+    # Relativo: imune a reajustes do salário mínimo e à inflação; mede quem ocupa as vagas de entrada.
+    con.sql("""CREATE OR REPLACE TEMP TABLE limiar AS
+               SELECT cbo4, t, quantile_cont(sal_real, 0.25) AS p25 FROM base
+               WHERE sal_real IS NOT NULL
+               GROUP BY 1, 2 HAVING count(*) >= 30""")
     return c
 
 
@@ -111,8 +112,8 @@ def construir(cfg, nome="principal", **filtros) -> pd.DataFrame:
     c = _base(cfg, con, **filtros)
     ag = _agregados(c)
     df = con.sql(f"""
-        SELECT t, ano, tri, b.cbo4, faixa, uf, {ag}
-        FROM base b LEFT JOIN limiar l ON l.cbo4 = b.cbo4
+        SELECT b.t, ano, tri, b.cbo4, faixa, uf, {ag}
+        FROM base b LEFT JOIN limiar l ON l.cbo4 = b.cbo4 AND l.t = b.t
         WHERE faixa IS NOT NULL GROUP BY ALL""").df()
     df.to_parquet(caminho(cfg, "processed", f"painel_{nome}.parquet"), index=False)
     log.info("painel %s: %d células, %d admissões, trimestres %s a %s", nome, len(df), int(df.adm.sum()),
@@ -144,8 +145,8 @@ def construir(cfg, nome="principal", **filtros) -> pd.DataFrame:
         "nordeste": f"CASE WHEN regiao = {int(c['regiao_nordeste'])} THEN 'NE' ELSE 'resto' END",
         "rn": f"CASE WHEN uf = {int(c['uf_rn'])} THEN 'RN' ELSE 'resto' END",
     }
-    partes = [f"""SELECT t, ano, tri, b.cbo4, faixa, '{d}' AS dim, {expr} AS valor, {ag}
-                  FROM base b LEFT JOIN limiar l ON l.cbo4 = b.cbo4
+    partes = [f"""SELECT b.t, ano, tri, b.cbo4, faixa, '{d}' AS dim, {expr} AS valor, {ag}
+                  FROM base b LEFT JOIN limiar l ON l.cbo4 = b.cbo4 AND l.t = b.t
                   WHERE faixa IS NOT NULL GROUP BY ALL""" for d, expr in dims.items()]
     het = con.sql(" UNION ALL ".join(partes)).df()
     het.to_parquet(caminho(cfg, "processed", "painel_heterogeneidade.parquet"), index=False)

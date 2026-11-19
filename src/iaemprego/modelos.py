@@ -30,8 +30,9 @@ DESFECHOS = {
     # ("tipo ignorado", eSocial), então a medida cairia a zero por mudança de registro, não por efeito real.
     # Ver scripts/diagnostico_tipomov.py e outputs/validacao/tipomov_por_ano.csv.
     "adm_sup": "Admissões com superior completo",
-    "adm_base": "Admissões na base salarial (≤ p25 da família)",
-    "adm_aprendiz": "Admissões de aprendizes",
+    "adm_base": "Admissões na base salarial (≤ p25 da família no trimestre)",
+    # "adm_aprendiz" sai da tripla diferença: aprendiz tem 14–24 anos por lei, quase não há adultos 30+
+    # para comparar. Vai para um modelo próprio só entre jovens (ver aprendizes()).
     "des": "Desligamentos",
 }
 FE = "cbo4:faixa + cbo4:t + faixa:uf:t"
@@ -144,16 +145,74 @@ def so_primeiro_semestre(cfg, df_trimestral: pd.DataFrame) -> pd.DataFrame:
     return g
 
 
+def _dupla_sazonal(cfg, d, y, rotulo, extra=None):
+    """Dupla diferença entre ocupações (mais × menos expostas) com referência no MESMO trimestre de 2022.
+
+    y ~ Σ_{t ≥ 2023T1} β_t·Expo·1[t] + Σ_q γ_q·Expo·1[trimestre q] + controles da pandemia | cbo4 + uf:t
+    γ_q absorve a sazonalidade própria das ocupações expostas (estimada com 2022); assim cada β_t compara o
+    trimestre t com o mesmo trimestre de 2022 (T1 com T1, ..., T4 com T4)."""
+    ref, ini, pos, _ = _per(cfg)
+    d = d[(d.t >= ini) & (d[y] >= 0)].copy()
+    d["t_pos"] = np.where(d.t >= pos, d.t, 0)
+    ctl = ""
+    if (d.choque_z != 0).any():
+        ctl = f" + i(t, choque_z, ref={ref}) + i(t, boom_z, ref={ref})"
+    fit = pf.fepois(f"{y} ~ i(t_pos, expo_v, ref=0) + i(tri, expo_v, ref=3){ctl} | cbo4 + uf:t",
+                    data=d, vcov={"CRV1": "cbo4"})
+    t = _tidy(fit, rotulo, y, extra)
+    t = t[(t["var"] == "expo") & (t.periodo > 9999)]
+    # pooled: média pós-ChatGPT contra o mesmo trimestre de 2022
+    d["expo_post"] = d.expo_v * (d.t >= pos)
+    ctl_a = ""
+    if (d.choque_z != 0).any():
+        ctl_a = " + i(ano, choque_z, ref=2022) + i(ano, boom_z, ref=2022)"
+    fit2 = pf.fepois(f"{y} ~ expo_post + i(tri, expo_v, ref=3){ctl_a} | cbo4 + uf:t", data=d, vcov={"CRV1": "cbo4"})
+    t2 = _tidy(fit2, rotulo + "_pooled", y, extra)
+    return pd.concat([t, t2[t2.termo == "expo_post"]])
+
+
 def por_faixa(cfg, df, y="adm"):
-    ref, ini, _, _ = _per(cfg)
     res = []
-    for faixa, d in df[df.t >= ini].groupby("faixa"):
-        d = d[d[y] >= 0]
-        fit = pf.fepois(f"{y} ~ i(t, expo_v, ref={ref}) + i(t, choque_z, ref={ref}) + i(t, boom_z, ref={ref})"
-                        f" | cbo4 + uf:t", data=d, vcov={"CRV1": "cbo4"})
-        t = _tidy(fit, "dupla_por_faixa", y, {"faixa": faixa})
-        res.append(t[t["var"] == "expo"])
+    for faixa, d in df.groupby("faixa"):
+        res.append(_dupla_sazonal(cfg, d, y, "dupla_por_faixa", {"faixa": faixa}))
     return pd.concat(res)
+
+
+def aprendizes(cfg, painel):
+    """Aprendizes: só entre jovens de 14–24 anos (idade legal), ocupações mais × menos expostas."""
+    ex = pd.read_parquet(caminho(cfg, "processed", "exposicao_cbo4.parquet"))[["cbo4", "expo_z"]]
+    d = painel[painel.faixa.isin(["ate17", "18_24"])]
+    d = d.groupby(["t", "ano", "tri", "cbo4", "uf"], as_index=False).adm_aprendiz.sum()
+    d = d.merge(ex, on="cbo4").rename(columns={"expo_z": "expo_v"})
+    try:
+        pand = pd.read_parquet(caminho(cfg, "processed", "pandemia_cbo4.parquet"))[["cbo4", "choque_z", "boom_z"]]
+        d = d.merge(pand, on="cbo4", how="left")
+    except FileNotFoundError:
+        d["choque_z"], d["boom_z"] = np.nan, np.nan
+    d[["choque_z", "boom_z"]] = d[["choque_z", "boom_z"]].fillna(0.0)
+    d["uf"] = d.uf.astype(str)
+    return _dupla_sazonal(cfg, d, "adm_aprendiz", "aprendizes_14_24", {"faixa": "14_24"})
+
+
+def grafico_dupla(cfg, tab, titulo, arquivo):
+    """Uma linha por faixa etária; 2022 = referência (zero) em cada trimestre."""
+    t = tab[tab.periodo.notna()]
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.axhline(0, color="0.5", lw=0.8)
+    ts = sorted(t.periodo.unique())
+    pos = {v: i for i, v in enumerate(ts)}
+    for faixa, g in t.groupby("faixa"):
+        g = g.sort_values("periodo")
+        ax.plot(g.periodo.map(pos), g.coef, marker="o", ms=3, lw=2.2 if faixa == "18_24" else 1.1,
+                label=faixa.replace("_", "–").replace("50mais", "50+"))
+    marc = [v for v in ts if v % 10 == 1]
+    ax.set_xticks([pos[v] for v in marc], [f"{int(v) // 10}T1" for v in marc])
+    ax.set_ylabel("coeficiente (log, PPML)")
+    ax.set_title(titulo, fontsize=10)
+    ax.legend(fontsize=8, ncol=3)
+    fig.tight_layout()
+    fig.savefig(caminho(cfg, "outputs", "figuras", arquivo), dpi=200)
+    plt.close(fig)
 
 
 def salarios(cfg, df):
@@ -238,8 +297,21 @@ def rodar_principal(cfg):
                       "event_adm_serie_completa.png")
     except Exception as e:
         log.warning("série completa falhou: %s", e)
-    for nome, f in (("dupla por faixa", lambda: por_faixa(cfg, preparar(cfg, painel, jovem_chave="jovem_amplo"), "adm")),
-                    ("salários", lambda: salarios(cfg, df))):
+    def _faixa():
+        t = por_faixa(cfg, preparar(cfg, painel, jovem_chave="jovem_amplo"), "adm")
+        grafico_dupla(cfg, t[t.modelo == "dupla_por_faixa"],
+                      "Admissões por faixa etária × exposição (cada trimestre vs. o mesmo de 2022)",
+                      "dupla_por_faixa.png")
+        return t
+
+    def _aprendiz():
+        t = aprendizes(cfg, painel)
+        ev = t[t.modelo == "aprendizes_14_24"]
+        grafico_dupla(cfg, ev, "Aprendizes 14–24 × exposição (cada trimestre vs. o mesmo de 2022)",
+                      "event_aprendizes_14_24.png")
+        return t
+
+    for nome, f in (("dupla por faixa", _faixa), ("aprendizes 14–24", _aprendiz), ("salários", lambda: salarios(cfg, df))):
         try:
             tabs.append(f())
             log.info("%s ok", nome)

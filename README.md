@@ -62,6 +62,12 @@ A pandemia não atingiu todas as ocupações igualmente, e pode ter atingido mai
 
 No teste com dados simulados, ignorar a pandemia quase dobra o efeito estimado (−0,28 contra −0,15 verdadeiro), e os controles o recuperam. Uma limitação: em famílias pequenas, choque e boom são medidos com ruído, e isso deixa um viés residual. Por isso famílias com menos de 20 admissões em jan–fev/2020 ficam sem a medida, e recebem a média.
 
+### Dupla diferença por faixa etária
+
+Para cada faixa, compara ocupações mais × menos expostas. Cada trimestre pós-ChatGPT é comparado com o **mesmo
+trimestre de 2022** (efeitos `exposição × trimestre do ano` absorvem a sazonalidade das ocupações expostas; com
+2022T3 como única referência, todos os 4º trimestres saíam com ≈ +0,05 em todas as faixas).
+
 ## Medidas de entrada (desfechos)
 
 | Variável | Definição |
@@ -69,8 +75,8 @@ No teste com dados simulados, ignorar a pandemia quase dobra o efeito estimado (
 | `adm` | admissões (com ajustes FOR/EXC até 12 meses, como o MTE) |
 | ~~`adm_1emp`~~ | primeiro emprego: **fora dos modelos**. A partir de 2022, 99,9% das admissões vêm com tipo 97 ("ignorado", eSocial); o campo deixa de ser informativo (`scripts/diagnostico_tipomov.py`) |
 | `adm_sup` | admissões com superior completo ou mais |
-| `adm_base` | admissões com salário real ≤ p25 da família CBO em jan–set/2022 |
-| `adm_aprendiz` | admissões de aprendizes |
+| `adm_base` | admissões com salário ≤ p25 da família CBO **no próprio trimestre** (relativo: imune a reajustes do mínimo e à inflação; a versão com limite fixo de 2022 mostrava pré-tendência e salto em 2023T1, quando o mínimo teve ganho real) |
+| `adm_aprendiz` | admissões de aprendizes: **fora da tripla diferença** (por lei têm 14–24 anos, quase não há adultos para comparar). Modelo próprio entre jovens de 14–24, ocupações mais × menos expostas |
 | `lsal` | log do salário real de admissão (R$ de jun/2026, IPCA) |
 
 ## Exposição à IA

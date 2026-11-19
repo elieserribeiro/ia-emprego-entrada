@@ -185,6 +185,12 @@ def test_pipeline_completo(cfg_sintetico):
     ev = adm[adm.modelo == "tripla_event_com_controles"].set_index("periodo").coef
     print("event study:", ev.round(3).to_dict())
     assert abs(ev.loc[20221]) < 0.08 and abs(ev.loc[20222]) < 0.08, "pré-tendência deveria ser ~0"
+    dup = res[(res.modelo == "dupla_por_faixa_pooled") & (res.termo == "expo_post")].set_index("faixa").coef
+    print("dupla por faixa (pooled, vs. mesmo trimestre de 2022):", dup.round(3).to_dict())
+    assert -0.22 < dup.loc["18_24"] < -0.08, "dupla 18–24 deveria captar o efeito nos jovens"
+    assert abs(dup.loc["30_39"]) < 0.05, "dupla 30–39 deveria ser ~0 (adultos sem efeito)"
+    assert (res.modelo == "aprendizes_14_24_pooled").any(), "modelo de aprendizes entre jovens"
+    assert not (res.desfecho == "adm_aprendiz").loc[res.modelo.str.startswith("tripla")].any()
     modelos.rodar_heterogeneidade(cfg)
     rob = modelos.rodar_robustez(cfg)
     print(rob[rob.termo == "treat_post"][["variante", "coef", "ep"]].round(3).to_string(index=False))
@@ -193,6 +199,7 @@ def test_pipeline_completo(cfg_sintetico):
     out = Path(cfg["_caminhos"]["outputs"])
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",
               "tabelas/pnad_desocupacao_faixa_superior.csv", "figuras/event_adm.png",
-              "figuras/event_adm_serie_completa.png", "figuras/indice_admissoes_quartil.png",
+              "figuras/event_adm_serie_completa.png", "figuras/dupla_por_faixa.png",
+              "figuras/event_aprendizes_14_24.png", "figuras/indice_admissoes_quartil.png",
               "tabelas/desc_indice_trimestral_movel4.csv", "validacao/cobertura_exposicao.csv"):
         assert (out / f).exists(), f
