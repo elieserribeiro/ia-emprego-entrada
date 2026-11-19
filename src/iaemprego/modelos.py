@@ -95,6 +95,13 @@ def _controles(df, ref, var_t="t"):
     return ""
 
 
+def _controles_anuais(df, ref):
+    if (df.chq_j != 0).any() or (df.boom_j != 0).any():
+        a = int(ref) // 10 if int(ref) > 9999 else int(ref)
+        return f" + i(ano, chq_j, ref={a}) + i(ano, boom_j, ref={a})"
+    return ""
+
+
 def triple(cfg, df, y="adm", ref=None, inicio=None, controles=True, pooled=False, efeitos=FE, rotulo=None,
            fase_fe=False, sazonal=True):
     ref0, ini0, _, chatgpt = _per(cfg)
@@ -113,7 +120,13 @@ def triple(cfg, df, y="adm", ref=None, inicio=None, controles=True, pooled=False
         alvo = "treat_post" if pooled else f"i(t_ev, treat, ref={ref})"
     else:
         alvo = "treat_post" if pooled else f"i(t, treat, ref={ref})"
-    rhs = alvo + (_controles(d, ref) if controles else "")
+    usa_saz = SAZ.strip(" +") in efeitos
+    if controles and usa_saz and "ano" in d:
+        # com a sazonalidade ocupação × idade × trimestre, controles por TRIMESTRE seriam colineares
+        # (a soma deles em cada trimestre do ano repete o efeito fixo sazonal): no pooled, variam por ANO
+        rhs = alvo + _controles_anuais(d, ref)
+    else:
+        rhs = alvo + (_controles(d, ref) if controles else "")
     fit = pf.fepois(f"{y} ~ {rhs} | {efeitos}", data=d, vcov={"CRV1": "cbo4"})
     out = _tidy(fit, rotulo or ("tripla_pooled" if pooled else "tripla_event"), y)
     return out[out["var"] == "treat"] if not pooled else out[out.termo == "treat_post"]
@@ -150,7 +163,7 @@ def salarios(cfg, df):
     ctl = _controles(d, ref)
     fit = pf.feols(f"lsal ~ i(t, treat, ref={ref}){ctl} | {FE}", data=d, weights="sal_n", vcov={"CRV1": "cbo4"})
     d2 = d[d.t != chatgpt]
-    fit2 = pf.feols(f"lsal ~ treat_post{ctl} | {FE}{SAZ}", data=d2, weights="sal_n", vcov={"CRV1": "cbo4"})
+    fit2 = pf.feols(f"lsal ~ treat_post{_controles_anuais(d2, ref)} | {FE}{SAZ}", data=d2, weights="sal_n", vcov={"CRV1": "cbo4"})
     a = _tidy(fit, "salario_event", "log_salario_real")
     b = _tidy(fit2, "salario_pooled", "log_salario_real")
     return pd.concat([a[a["var"] == "treat"], b[b.termo == "treat_post"]])
@@ -204,8 +217,12 @@ def rodar_principal(cfg):
             continue
         for controles in (True, False):
             for pooled in (False, True):
-                t = triple(cfg, df, y, controles=controles, pooled=pooled,
-                           rotulo=f"tripla_{'pooled' if pooled else 'event'}_{'com' if controles else 'sem'}_controles")
+                rot = f"tripla_{'pooled' if pooled else 'event'}_{'com' if controles else 'sem'}_controles"
+                try:
+                    t = triple(cfg, df, y, controles=controles, pooled=pooled, rotulo=rot)
+                except Exception as e:  # um modelo que falha não derruba os demais
+                    log.warning("modelo %s / %s falhou: %s", y, rot, e)
+                    continue
                 if t is None:
                     continue
                 tabs.append(t)
@@ -214,12 +231,21 @@ def rodar_principal(cfg):
         log.info("modelo principal: %s ok", y)
     # event study descritivo com toda a série (2020T1+), sem controles: mostra a pandemia no gráfico
     ini = int(cfg["periodo"]["inicio"].replace("-", "")[:4]) * 10 + 1
-    t = triple(cfg, df, "adm", inicio=ini, controles=False, rotulo="tripla_event_serie_completa")
-    tabs.append(t)
-    grafico_event(cfg, t, "Admissões de jovens 18–24 × exposição à IA, série completa (sem controles)",
-                  "event_adm_serie_completa.png")
-    tabs.append(por_faixa(cfg, preparar(cfg, painel, jovem_chave="jovem_amplo"), "adm"))
-    tabs.append(salarios(cfg, df))
+    try:
+        t = triple(cfg, df, "adm", inicio=ini, controles=False, rotulo="tripla_event_serie_completa")
+        tabs.append(t)
+        grafico_event(cfg, t, "Admissões de jovens 18–24 × exposição à IA, série completa (sem controles)",
+                      "event_adm_serie_completa.png")
+    except Exception as e:
+        log.warning("série completa falhou: %s", e)
+    for nome, f in (("dupla por faixa", lambda: por_faixa(cfg, preparar(cfg, painel, jovem_chave="jovem_amplo"), "adm")),
+                    ("salários", lambda: salarios(cfg, df))):
+        try:
+            tabs.append(f())
+            log.info("%s ok", nome)
+        except Exception as e:
+            log.warning("%s falhou: %s", nome, e)
+    # grava o que saiu a cada etapa, mesmo que algo tenha falhado
     res = pd.concat(tabs)
     res.to_csv(caminho(cfg, "outputs", "tabelas", "modelos_principais.csv"), index=False)
     return res
@@ -253,6 +279,7 @@ def rodar_robustez(cfg):
     E = "cbo4:faixa + cbo4:t + faixa:uf:t"  # sem sazonalidade trimestral (só um período por ano)
     var = [  # (nome, painel, kwargs de preparar, kwargs de triple)
         ("principal", base_p, {}, {}),
+        ("ate_2026T2", base_p[base_p.t <= 20262], {}, {}),   # sem o último trimestre (ajustes FOR/EXC incompletos)
         ("sem_controles_pandemia", base_p, {}, {"controles": False}),
         ("serie_completa_fe_fase", base_p, {}, {"inicio": ini_serie, "fase_fe": True}),
         ("incluir_2021_fe_fase", base_p, {}, {"inicio": 20211, "fase_fe": True}),

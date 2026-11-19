@@ -188,7 +188,7 @@ def test_pipeline_completo(cfg_sintetico):
     modelos.rodar_heterogeneidade(cfg)
     rob = modelos.rodar_robustez(cfg)
     print(rob[rob.termo == "treat_post"][["variante", "coef", "ep"]].round(3).to_string(index=False))
-    assert rob.variante.nunique() >= 12
+    assert rob.variante.nunique() >= 13
     pnad.rodar(cfg)
     out = Path(cfg["_caminhos"]["outputs"])
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",
