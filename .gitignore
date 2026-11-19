@@ -1,0 +1,22 @@
+# Microdados e intermediários: nunca versionar (grandes e reconstruíveis)
+data/raw/
+data/interim/
+data/processed/
+outputs/
+!data/ref/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+# painel
+painel_ia/artefatos/
+painel_ia/dados/cbo_mte/*
+!painel_ia/dados/cbo_mte/.gitkeep
+*.db
+__pycache__/
+*.egg-info/
+
+.venv/
+.pytest_cache/
+*.log

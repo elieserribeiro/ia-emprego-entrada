@@ -1,0 +1,67 @@
+# Configuração do pipeline. Caminhos relativos à raiz do repositório.
+caminhos:
+  raw: data/raw            # arquivos baixados (.7z, .zip) — fora do Git
+  interim: data/interim    # Parquet por arquivo — fora do Git
+  processed: data/processed
+  ref: data/ref            # tabelas de referência versionadas (ponte CBO->OIT, totais do MTE)
+  outputs: outputs
+
+periodo:
+  # Todos os meses disponíveis do Novo CAGED, agregados em trimestres (t = ano*10 + trimestre, ex.: 20223).
+  inicio: "2020-01"
+  fim: null                      # null = último mês presente nos dados ingeridos
+  trimestre_referencia: 20223    # 2022T3: último trimestre inteiro antes do ChatGPT (30/nov/2022)
+  trimestre_chatgpt: 20224       # trimestre de transição: fora da comparação "pooled"
+  inicio_pos: 20231
+  inicio_amostra_principal: 20221   # modelo principal: 2022T1 em diante (longe do pior da pandemia)
+  pandemia: [20202, 20214]       # 2020T2 a 2021T4
+  meses_pesos: [202201, 202209]  # meses usados para pesos da exposição e limiar salarial (pré-ChatGPT)
+  base_2023: {inicio: 20231, referencia: 20232, inicio_pos: 20241}   # robustez: adoção ainda baixa em 2023
+
+pandemia:
+  # Choques medidos no próprio CAGED, por família CBO, como diferença JOVEM − ADULTO (cancela a sazonalidade
+  # comum à ocupação). Entram como controle: choque × Jovem × trimestre.
+  pre: [202001, 202002]          # jan–fev/2020, antes da pandemia
+  choque: [202004, 202006]       # abr–jun/2020, o colapso
+  boom: [202201, 202202]         # jan–fev/2022 contra jan–fev/2020 (mesmos meses): recuperação/boom
+
+caged:
+  ftp_host: ftp.mtps.gov.br
+  ftp_base: "/pdet/microdados/NOVO CAGED"
+  meses_ajuste: 12               # FOR/EXC considerados até 12 meses após a competência (Portaria MTE 2.420/2023)
+  publicacao_inicio: "2020-01"
+  publicacao_fim: null           # null = último mês disponível no FTP
+
+pnad:
+  base_url: "https://ftp.ibge.gov.br/Trabalho_e_Rendimento/Pesquisa_Nacional_por_Amostra_de_Domicilios_continua/Trimestral/Microdados"
+  trimestres: [1, 2, 3, 4]
+  anos: [2020, 2021, 2022, 2023, 2024, 2025, 2026]
+
+ipca:
+  # SIDRA tabela 1737, variável 2266 (número-índice). Base para deflacionar: junho de 2026.
+  url: "https://apisidra.ibge.gov.br/values/t/1737/n1/all/v/2266/p/all"
+  base: 202606
+
+idade:
+  faixas: [[14, 17, "ate17"], [18, 24, "18_24"], [25, 29, "25_29"], [30, 39, "30_39"], [40, 49, "40_49"], [50, 120, "50mais"]]
+  jovem: ["18_24"]                       # tratamento principal (como Brynjolfsson et al.: entrada)
+  jovem_amplo: ["18_24", "25_29"]        # robustez (como Duque/FGV IBRE: 18-29)
+  adulto: ["30_39", "40_49", "50mais"]   # grupo de comparação
+
+exposicao:
+  medida: ilo_mean_2025          # média dos escores de tarefas (OIT 2025)
+  imputar_por_hierarquia_cbo: true
+
+# Códigos do Novo CAGED usados nas medidas. CONFIRMAR com outputs/validacao/frequencias_codigos.csv
+# e com o layout oficial baixado na Etapa 1 antes de interpretar resultados.
+codigos:
+  primeiro_emprego: [10]          # tipomovimentação: admissão por primeiro emprego
+  superior: [9, 10, 11, 80]       # graudeinstrução: superior completo, mestrado, doutorado, pós
+  medio_completo: [7]
+  sexo_mulher: [3]
+  raca_negra: [2, 3]              # preta + parda
+  raca_branca: [1]
+  aprendiz: [1]
+  intermitente: [1]
+  uf_rn: 24
+  regiao_nordeste: 2
