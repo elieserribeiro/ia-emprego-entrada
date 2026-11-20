@@ -859,8 +859,14 @@ def rodar_diferencas(cfg, grupos=None, dims=None):
         chaves = set(zip(out.grupo, out.dim))
         antigo = antigo[[(g, d) not in chaves for g, d in zip(antigo.grupo, antigo.dim)]]
         out = pd.concat([antigo, out], ignore_index=True)
-    # Holm sobre a tabela completa (inclusive linhas de rodadas anteriores), por grupo etário × desfecho
-    teste = out.termo.str.match(r"diferenca::|wald_")
+    return _salvar_diferencas(cfg, out, arq)
+
+
+def _salvar_diferencas(cfg, out, arq):
+    """Holm sobre a tabela completa, por grupo etário × desfecho. Família = uma hipótese por dimensão:
+    a diferença nas dimensões de 2 grupos e o Wald conjunto nas regiões (as diferenças par a par entre
+    regiões são descritivas e ficam sem p_holm, para não inflar a correção das outras dimensões)."""
+    teste = (out.termo.str.startswith("diferenca::") & (out.dim != "regiao")) | (out.termo == "wald_todos_iguais")
     out["p_holm"] = np.nan
     for _, idx in out[teste].groupby(["grupo", "desfecho"]).groups.items():
         out.loc[idx, "p_holm"] = _holm(out.loc[idx, "p"])
@@ -871,3 +877,9 @@ def rodar_diferencas(cfg, grupos=None, dims=None):
         except Exception as e:
             log.warning("gráfico de diferenças %s falhou: %s", g, e)
     return out
+
+
+def recalcular_holm(cfg):
+    """Refaz só a correção de Holm e os gráficos a partir do diferencas_grupos.csv (sem rodar modelos)."""
+    arq = caminho(cfg, "outputs", "tabelas", "diferencas_grupos.csv")
+    return _salvar_diferencas(cfg, pd.read_csv(arq), arq)
