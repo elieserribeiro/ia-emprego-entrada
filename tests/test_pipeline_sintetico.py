@@ -206,11 +206,16 @@ def test_pipeline_completo(cfg_sintetico):
     tl = pre[(pre.grupo == "18_24") & (pre.termo == "treat_post") & (pre.modelo == "tendencia_linear_pooled")]
     print("pré-tendência 18–24: desvio médio", m.coef.round(3).tolist(), "| tendência linear", tl.coef.round(3).tolist())
     assert len(m) == 1 and len(tl) == 1 and m.coef.iloc[0] < -0.05, "efeito deve aparecer acima da tendência"
+    ac = modelos.rodar_aceleracao(cfg)
+    mud = ac[(ac.grupo == "18_24") & (ac.modelo == "aceleracao_sem_pandemia") & (ac.termo == "efeito_medio_pos")]
+    print("aceleração 18–24 (sem pandemia): efeito médio pós", mud.coef.round(3).tolist())
+    assert ac.modelo.nunique() >= 3 and set(ac.grupo) == {"18_24", "25_29"}
+    assert len(mud) == 1 and mud.coef.iloc[0] < 0, "degrau negativo no DGP → mudança de inclinação negativa"
     pnad.rodar(cfg)
     out = Path(cfg["_caminhos"]["outputs"])
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",
               "tabelas/pnad_desocupacao_faixa_superior.csv", "figuras/event_adm.png",
               "figuras/event_adm_serie_completa.png", "figuras/dupla_por_faixa.png",
-              "figuras/event_aprendizes_14_24.png", "figuras/event_25_29_adm.png", "figuras/pretendencia_25_29.png", "tabelas/pretendencia.csv", "figuras/indice_admissoes_quartil.png",
+              "figuras/event_aprendizes_14_24.png", "figuras/event_25_29_adm.png", "figuras/pretendencia_25_29.png", "tabelas/pretendencia.csv", "tabelas/aceleracao.csv", "figuras/aceleracao_25_29.png", "figuras/indice_admissoes_quartil.png",
               "tabelas/desc_indice_trimestral_movel4.csv", "validacao/cobertura_exposicao.csv"):
         assert (out / f).exists(), f

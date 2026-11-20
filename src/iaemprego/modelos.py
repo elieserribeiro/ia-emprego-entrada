@@ -554,3 +554,138 @@ def rodar_pretendencia(cfg):
     out = pd.concat(res)
     out.to_csv(caminho(cfg, "outputs", "tabelas", "pretendencia.csv"), index=False)
     return out
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Aceleração (opção B): a inclinação da queda mudou depois do ChatGPT?
+# ---------------------------------------------------------------------------------------------------------
+# Modelo de quebra de tendência (piecewise linear) na tripla diferença, PPML:
+#   adm ~ θ_pre·Treat·k + θ_mud·Treat·max(k, 0) | FE + sazonalidade [+ nível por fase]
+#   k = trimestres desde 2022T4 (2022T4 = 0, 2023T1 = 1, ...)
+#   θ_pre: inclinação que já existia antes do ChatGPT; θ_mud: MUDANÇA de inclinação depois.
+#   Combinações reportadas (com a vcov completa): inclinação pós = θ_pre + θ_mud;
+#   efeito acumulado no último trimestre = h·θ_mud; efeito médio pós = (h+1)/2·θ_mud (h = trimestres pós).
+# Ressalva para o artigo: teste escolhido DEPOIS de ver os dados (efeito gradual) → complementar, não principal.
+VARIANTES_ACEL = {
+    "fase_sem_controles": "2020T1+, nível próprio por fase (pré/pandemia/pós)",
+    "fase_com_controles": "2020T1+, nível por fase + controles da pandemia por ano",
+    "sem_pandemia": "2020T1 + 2022T1+, sem os trimestres da pandemia",
+    "so_2022": "2022T1+ (pré-tendência só com 2022T1–T4)",
+}
+
+
+def _comb(nome, c, b, V, modelo, n, extra):
+    est, ep = float(c @ b), float(np.sqrt(c @ V @ c))
+    from scipy import stats
+    return dict(termo=nome, coef=est, ep=ep, p=float(2 * stats.norm.sf(abs(est / ep))) if ep > 0 else np.nan,
+                ic_inf=est - 1.96 * ep, ic_sup=est + 1.96 * ep, var="treat", modelo=modelo, desfecho="adm",
+                n_obs=n, **extra)
+
+
+def _quebra_inclinacao(cfg, df, ini, variante):
+    ref, ini_principal, _, chatgpt = _per(cfg)
+    a, z = cfg["periodo"]["pandemia"]
+    d = df[df.t >= ini].copy()
+    ef, ctrl = FE + SAZ, ""
+    if variante.startswith("fase"):
+        ef += " + cbo4:faixa:fase"
+        if variante == "fase_com_controles":
+            ctrl = _controles_anuais(d, ref)
+    elif variante == "sem_pandemia":
+        d = d[~d.t.between(a, z)]
+    elif variante == "so_2022":
+        d = d[d.t >= ini_principal]
+    k = _idx(d.t) - _idx([chatgpt])[0]
+    d["treat_trend"] = d.treat * k
+    d["treat_trend_pos"] = d.treat * np.maximum(k, 0)
+    fit = pf.fepois(f"adm ~ treat_trend + treat_trend_pos{ctrl} | {ef}", data=d, vcov={"CRV1": "cbo4"})
+    nomes = list(fit._coefnames)
+    b, V = np.asarray(fit.coef().values), np.asarray(fit._vcov)
+    e1, e2 = np.zeros(len(b)), np.zeros(len(b))
+    e1[nomes.index("treat_trend")] = 1
+    e2[nomes.index("treat_trend_pos")] = 1
+    h = int(k.max())
+    mod = f"aceleracao_{variante}"
+    extra = dict(trimestres_pos=h, trimestres_pre=int(len(np.unique(k[k < 0]))))
+    linhas = [
+        _comb("inclinacao_pre", e1, b, V, mod, fit._N, extra),
+        _comb("mudanca_inclinacao", e2, b, V, mod, fit._N, extra),
+        _comb("inclinacao_pos", e1 + e2, b, V, mod, fit._N, extra),
+        _comb("efeito_acumulado_ultimo_tri", h * e2, b, V, mod, fit._N, extra),
+        _comb("efeito_medio_pos", (h + 1) / 2 * e2, b, V, mod, fit._N, extra),
+    ]
+    return pd.DataFrame(linhas), (float(b @ e1), float(b @ e2))
+
+
+def _event_coefs(cfg, df, ini):
+    """Coeficientes do event study 2020T1+ (ref. 2022T3), só para o gráfico."""
+    ref = cfg["periodo"]["trimestre_referencia"]
+    fit = pf.fepois(f"adm ~ i(t, treat, ref={ref}) | {FE}", data=df[df.t >= ini], vcov={"CRV1": "cbo4"})
+    per = [int(re.search(r"::(\d+)", n).group(1)) for n in fit._coefnames]
+    return pd.DataFrame({"periodo": per + [ref], "coef": list(fit.coef().values) + [0.0],
+                         "ep": list(fit.se().values) + [0.0]}).sort_values("periodo").reset_index(drop=True)
+
+
+def _grafico_aceleracao(cfg, g, inclinacoes, titulo, arquivo):
+    ref, chatgpt = cfg["periodo"]["trimestre_referencia"], cfg["periodo"]["trimestre_chatgpt"]
+    th_pre, th_mud = inclinacoes
+    k = _idx(g.periodo) - _idx([chatgpt])[0]
+    k_ref = _idx([ref])[0] - _idx([chatgpt])[0]
+    reta = th_pre * (k - k_ref) + th_mud * np.maximum(k, 0)       # ancorada em 0 na referência
+    contraf = th_pre * (k - k_ref)                                # se a inclinação anterior continuasse
+    x = np.arange(len(g))
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.axhline(0, color="0.5", lw=0.8)
+    a, z = cfg["periodo"]["pandemia"]
+    dentro = x[(g.periodo >= a) & (g.periodo <= z)]
+    if len(dentro):
+        ax.axvspan(dentro.min() - 0.5, dentro.max() + 0.5, color="0.92", zorder=0)
+    cg = x[g.periodo == chatgpt]
+    if len(cg):
+        ax.axvline(cg[0], ls="--", color="0.55", lw=0.9)
+    ax.errorbar(x, g.coef, yerr=1.96 * g.ep, fmt="o", color="#1f5fbf", capsize=2, ms=4, label="coeficiente (event study)")
+    pos = k >= 0
+    ax.plot(x, reta, color="#d0612a", lw=1.6, label="tendência com quebra em 2022T4")
+    ax.plot(x[pos], contraf[pos], color="#d0612a", lw=1.2, ls=":", label="se a inclinação anterior continuasse")
+    marc = [i for i, v in enumerate(g.periodo) if int(v) % 10 == 1]
+    ax.set_xticks(marc, [f"{int(g.periodo[i]) // 10}T1" for i in marc])
+    ax.set_ylabel("coeficiente (log, PPML)")
+    ax.set_title(titulo, fontsize=10)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(caminho(cfg, "outputs", "figuras", arquivo), dpi=200)
+    plt.close(fig)
+
+
+def rodar_aceleracao(cfg):
+    """Opção B do teste de pré-tendência: mudança de inclinação depois do ChatGPT, 4 variantes × 2 grupos."""
+    painel = pd.read_parquet(caminho(cfg, "processed", "painel_principal.parquet"))
+    ini = int(cfg["periodo"]["inicio"].replace("-", "")[:4]) * 10 + 1
+    res = []
+    for chave, grupo in GRUPOS.items():
+        df = preparar(cfg, painel, jovem_chave=chave)
+        incl_graf = None
+        for var, desc in VARIANTES_ACEL.items():
+            try:
+                r, incl = _quebra_inclinacao(cfg, df, ini, var)
+                r["grupo"], r["descricao"] = grupo, desc
+                res.append(r)
+                if var == "sem_pandemia":
+                    incl_graf = incl
+                m = r.set_index("termo")
+                log.info("aceleração %s / %s: inclinação pré %.4f | mudança %.4f (p=%.3f) | efeito médio pós %.3f",
+                         grupo, var, m.coef["inclinacao_pre"], m.coef["mudanca_inclinacao"],
+                         m.p["mudanca_inclinacao"], m.coef["efeito_medio_pos"])
+            except Exception as e:
+                log.warning("aceleração %s / %s falhou: %s", grupo, var, e)
+        if incl_graf is not None:
+            try:
+                rot = grupo.replace("_", "–")
+                _grafico_aceleracao(cfg, _event_coefs(cfg, df, ini), incl_graf,
+                                    f"Jovens {rot}: a queda acelerou depois do ChatGPT? (quebra de tendência, "
+                                    f"sem trimestres da pandemia)", f"aceleracao_{grupo}.png")
+            except Exception as e:
+                log.warning("gráfico de aceleração %s falhou: %s", grupo, e)
+    out = pd.concat(res)
+    out.to_csv(caminho(cfg, "outputs", "tabelas", "aceleracao.csv"), index=False)
+    return out

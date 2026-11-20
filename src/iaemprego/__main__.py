@@ -6,7 +6,7 @@ Etapas, na ordem:
   exposicao                                    (Etapa 3)
   painel                                       (Etapa 4)
   descritivas                                  (Etapa 5)
-  modelos        heterogeneidade  robustez  pretendencia   (Etapas 6, 7 e 9)
+  modelos        heterogeneidade  robustez  pretendencia  aceleracao   (Etapas 6, 7 e 9)
   pnad                                         (Etapa 8)
   tudo           roda da ingestão aos modelos (sem downloads)
 """
@@ -30,9 +30,10 @@ ETAPAS = {
     "heterogeneidade": modelos.rodar_heterogeneidade,
     "robustez": modelos.rodar_robustez,
     "pretendencia": modelos.rodar_pretendencia,
+    "aceleracao": modelos.rodar_aceleracao,
     "pnad": pnad.rodar,
 }
-TUDO = ["ingerir", "validar", "exposicao", "painel", "descritivas", "modelos", "heterogeneidade", "robustez", "pretendencia", "pnad"]
+TUDO = ["ingerir", "validar", "exposicao", "painel", "descritivas", "modelos", "heterogeneidade", "robustez", "pretendencia", "aceleracao", "pnad"]
 
 
 def main(argv=None):
