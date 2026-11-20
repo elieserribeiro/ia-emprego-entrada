@@ -211,11 +211,20 @@ def test_pipeline_completo(cfg_sintetico):
     print("aceleração 18–24 (sem pandemia): efeito médio pós", mud.coef.round(3).tolist())
     assert ac.modelo.nunique() >= 3 and set(ac.grupo) == {"18_24", "25_29"}
     assert len(mud) == 1 and mud.coef.iloc[0] < 0, "degrau negativo no DGP → mudança de inclinação negativa"
+    dif = modelos.rodar_diferencas(cfg)
+    het = pd.read_csv(Path(cfg["_caminhos"]["outputs"]) / "tabelas" / "heterogeneidade.csv")
+    a = dif[(dif.grupo == "18_24") & (dif.dim == "sexo") & (dif.desfecho == "adm") & (dif.termo == "efeito::mulher")]
+    b = het[(het.grupo == "18_24") & (het.dim == "sexo") & (het.valor == "mulher") & (het.desfecho == "adm")]
+    print("diferenças: efeito mulher empilhado", a.coef.round(5).tolist(), "| separado", b.coef.round(5).tolist())
+    assert len(a) == 1 and len(b) == 1 and abs(a.coef.iloc[0] - b.coef.iloc[0]) < 1e-3, \
+        "modelo empilhado deve reproduzir a estimativa separada do grupo"
+    assert dif.termo.str.startswith("diferenca::").any() and (dif.termo == "wald_todos_iguais").any()
+    assert dif.p_holm.notna().any()
     pnad.rodar(cfg)
     out = Path(cfg["_caminhos"]["outputs"])
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",
               "tabelas/pnad_desocupacao_faixa_superior.csv", "figuras/event_adm.png",
               "figuras/event_adm_serie_completa.png", "figuras/dupla_por_faixa.png",
-              "figuras/event_aprendizes_14_24.png", "figuras/event_25_29_adm.png", "figuras/pretendencia_25_29.png", "tabelas/pretendencia.csv", "tabelas/aceleracao.csv", "figuras/aceleracao_25_29.png", "figuras/indice_admissoes_quartil.png",
+              "figuras/event_aprendizes_14_24.png", "figuras/event_25_29_adm.png", "figuras/pretendencia_25_29.png", "tabelas/pretendencia.csv", "tabelas/aceleracao.csv", "tabelas/diferencas_grupos.csv", "figuras/diferencas_grupos_25_29.png", "figuras/aceleracao_25_29.png", "figuras/indice_admissoes_quartil.png",
               "tabelas/desc_indice_trimestral_movel4.csv", "validacao/cobertura_exposicao.csv"):
         assert (out / f).exists(), f

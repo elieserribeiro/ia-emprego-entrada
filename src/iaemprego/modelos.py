@@ -708,3 +708,159 @@ def rodar_aceleracao(cfg, variantes=None):
         out = pd.concat([antigo, out], ignore_index=True)
     out.to_csv(arq, index=False)
     return out
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Teste formal das diferenças entre grupos (heterogeneidade)
+# ---------------------------------------------------------------------------------------------------------
+# Modelo empilhado e totalmente interagido: os dois (ou mais) grupos de uma dimensão entram juntos, cada um
+# com seus próprios efeitos fixos, controles da pandemia e coeficiente treat_post. As estimativas de cada
+# grupo são as MESMAS do rodar_heterogeneidade (que roda um modelo por grupo), mas aqui a covariância entre
+# elas é conhecida (mesmas ocupações → erros correlacionados, cluster por cbo4), então dá para testar a
+# diferença. Regiões (5 níveis): teste de Wald conjunto de que todos os efeitos são iguais.
+# p_holm: correção de Holm para comparações múltiplas, dentro de cada grupo etário × desfecho.
+TESTES_GRUPOS = {
+    "sexo": ["homem", "mulher"],
+    "raca": ["branca", "negra"],
+    "instrucao": ["medio", "superior"],
+    "nordeste": ["resto", "NE"],
+    "rn": ["resto", "RN"],
+    "regiao": None,  # todos os valores presentes
+}
+DESFECHOS_GRUPOS = ("adm", "adm_sup", "adm_base")
+
+
+def _holm(p):
+    p = np.asarray(p, dtype=float)
+    ordem = np.argsort(p)
+    m = len(p)
+    adj = np.empty(m)
+    acum = 0.0
+    for i, j in enumerate(ordem):
+        acum = max(acum, (m - i) * p[j])
+        adj[j] = min(1.0, acum)
+    return adj
+
+
+def _teste_diferenca(cfg, d, y, niveis):
+    from scipy import stats
+    ref, ini, _, chatgpt = _per(cfg)
+    d = d[(d.t >= ini) & (d.t != chatgpt) & d[y].notna() & (d[y] >= 0) & d.valor.isin(niveis)].copy()
+    tem_ctrl = (d.chq_j != 0).any() or (d.boom_j != 0).any()
+    ano_ref = int(ref) // 10
+    termos, ctrl = [], []
+    for k, v in enumerate(niveis):
+        m = (d.valor == v).astype(float)
+        d[f"tp_{k}"] = d.treat_post * m
+        termos.append(f"tp_{k}")
+        if tem_ctrl:
+            d[f"cq_{k}"], d[f"bm_{k}"] = d.chq_j * m, d.boom_j * m
+            ctrl += [f"i(ano, cq_{k}, ref={ano_ref})", f"i(ano, bm_{k}, ref={ano_ref})"]
+    ef = "cbo4:faixa:valor + cbo4:t:valor + faixa:t:valor + cbo4:faixa:tri:valor"
+    fit = pf.fepois(f"{y} ~ {' + '.join(termos + ctrl)} | {ef}", data=d, vcov={"CRV1": "cbo4"})
+    nomes = list(fit._coefnames)
+    b, V = np.asarray(fit.coef().values), np.asarray(fit._vcov)
+    idx = [nomes.index(t) for t in termos]
+    linhas = []
+    for k, v in enumerate(niveis):  # efeito de cada grupo
+        c = np.zeros(len(b)); c[idx[k]] = 1
+        linhas.append(_comb(f"efeito::{v}", c, b, V, "diferenca_grupos", fit._N, {}))
+    for k in range(1, len(niveis)):  # diferença de cada grupo contra o primeiro (base)
+        c = np.zeros(len(b)); c[idx[k]] = 1; c[idx[0]] = -1
+        linhas.append(_comb(f"diferenca::{niveis[k]}-{niveis[0]}", c, b, V, "diferenca_grupos", fit._N, {}))
+    if len(niveis) > 2:  # Wald conjunto: todos iguais
+        R = np.zeros((len(niveis) - 1, len(b)))
+        for k in range(1, len(niveis)):
+            R[k - 1, idx[k]], R[k - 1, idx[0]] = 1, -1
+        Rb = R @ b
+        W = float(Rb @ np.linalg.solve(R @ V @ R.T, Rb))
+        linhas.append(dict(termo="wald_todos_iguais", coef=W, p=float(stats.chi2.sf(W, len(niveis) - 1)),
+                           var="treat", modelo="diferenca_grupos", desfecho="adm", n_obs=fit._N))
+    out = pd.DataFrame(linhas)
+    out["desfecho"] = y
+    return out
+
+
+def _grafico_diferencas(cfg, tab, grupo, arquivo):
+    t = tab[(tab.grupo == grupo) & tab.termo.str.startswith("efeito::")].copy()
+    if t.empty:
+        return
+    desfs = [y for y in DESFECHOS_GRUPOS if (t.desfecho == y).any()]
+    fig, axes = plt.subplots(1, len(desfs), figsize=(4.2 * len(desfs), 5.5), sharey=True)
+    axes = np.atleast_1d(axes)
+    rot_y = {"adm": "Admissões (todas)", "adm_sup": "Admissões com superior", "adm_base": "Admissões na base salarial"}
+    ordem = [(dim, v) for dim, nv in TESTES_GRUPOS.items()
+             for v in (nv or sorted(t[t.dim == dim].termo.str.replace("efeito::", "").unique()))]
+    pos = {k: i for i, k in enumerate(ordem)}
+    for ax, y in zip(axes, desfs):
+        s = t[t.desfecho == y].copy()
+        s["v"] = s.termo.str.replace("efeito::", "")
+        s["y"] = [pos.get((a, b), np.nan) for a, b in zip(s.dim, s.v)]
+        s = s.dropna(subset=["y"])
+        ax.axvline(0, color="0.5", lw=0.8)
+        ax.errorbar(100 * s.coef, s.y, xerr=196 * s.ep, fmt="o", color="#1f5fbf", capsize=2, ms=4)
+        dif = tab[(tab.grupo == grupo) & (tab.desfecho == y) & tab.termo.str.match(r"diferenca::|wald_")]
+        for dim in s.dim.unique():
+            dd = dif[dif.dim == dim]
+            if len(dd):
+                p = dd.p_holm.min() if dim != "regiao" else dd[dd.termo == "wald_todos_iguais"].p_holm.min()
+                yy = s[s.dim == dim].y.max()
+                ax.annotate(f"p dif.={p:.3f}", (ax.get_xlim()[1], yy), fontsize=7, ha="right", va="center",
+                            color="#d0612a" if p < 0.05 else "0.4")
+        ax.set_title(rot_y.get(y, y), fontsize=9)
+        ax.set_xlabel("efeito (%)")
+    axes[0].set_yticks(range(len(ordem)), [f"{a}: {b}" for a, b in ordem], fontsize=8)
+    axes[0].invert_yaxis()
+    fig.suptitle(f"Jovens {grupo.replace('_', '–')}: efeito por grupo e teste da diferença (p ajustado por Holm)",
+                 fontsize=10)
+    fig.tight_layout()
+    fig.savefig(caminho(cfg, "outputs", "figuras", arquivo), dpi=200)
+    plt.close(fig)
+
+
+def rodar_diferencas(cfg, grupos=None, dims=None):
+    """Teste formal das diferenças entre grupos. grupos: subconjunto de GRUPOS (ex.: ['jovem_25_29']);
+    dims: subconjunto de TESTES_GRUPOS. Sem argumentos roda tudo."""
+    het = pd.read_parquet(caminho(cfg, "processed", "painel_heterogeneidade.parquet"))
+    res = []
+    for chave, grupo in GRUPOS.items():
+        if grupos and chave not in grupos and grupo not in grupos:
+            continue
+        for dim, niveis in TESTES_GRUPOS.items():
+            if dims and dim not in dims:
+                continue
+            h = het[het.dim == dim]
+            nv = niveis or sorted(v for v in h.valor.astype(str).unique() if v not in ("None", "nan", "<NA>", "9"))
+            df = preparar(cfg, h, jovem_chave=chave)
+            df["valor"] = df.valor.astype(str)
+            for y in DESFECHOS_GRUPOS:
+                if dim == "instrucao" and y == "adm_sup":
+                    continue  # "superior" é a própria divisão
+                try:
+                    r = _teste_diferenca(cfg, df, y, nv)
+                except Exception as e:
+                    log.warning("diferenças %s %s %s falhou: %s", grupo, dim, y, e)
+                    continue
+                r["dim"], r["grupo"] = dim, grupo
+                res.append(r)
+                d = r[r.termo.str.match(r"diferenca::|wald_")]
+                log.info("diferenças %s %s %s: %s", grupo, dim, y,
+                         "; ".join(f"{a} {c:+.4f} (p={p:.3f})" for a, c, p in zip(d.termo, d.coef, d.p)))
+    out = pd.concat(res, ignore_index=True)
+    teste = out.termo.str.match(r"diferenca::|wald_")
+    out["p_holm"] = np.nan
+    for _, idx in out[teste].groupby(["grupo", "desfecho"]).groups.items():
+        out.loc[idx, "p_holm"] = _holm(out.loc[idx, "p"])
+    arq = caminho(cfg, "outputs", "tabelas", "diferencas_grupos.csv")
+    if (grupos or dims) and arq.exists():  # rodada parcial: troca só as linhas refeitas
+        antigo = pd.read_csv(arq)
+        chaves = set(zip(out.grupo, out.dim))
+        antigo = antigo[[(g, d) not in chaves for g, d in zip(antigo.grupo, antigo.dim)]]
+        out = pd.concat([antigo, out], ignore_index=True)
+    out.to_csv(arq, index=False)
+    for g in out.grupo.unique():
+        try:
+            _grafico_diferencas(cfg, out, g, f"diferencas_grupos_{g}.png")
+        except Exception as e:
+            log.warning("gráfico de diferenças %s falhou: %s", g, e)
+    return out
