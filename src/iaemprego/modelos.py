@@ -590,7 +590,17 @@ def _quebra_inclinacao(cfg, df, ini, variante):
     if variante.startswith("fase"):
         ef += " + cbo4:faixa:fase"
         if variante == "fase_com_controles":
-            ctrl = _controles_anuais(d, ref)
+            # Controles da pandemia só para os anos DEPOIS da pandemia (2023+ vs. 2022). Dentro da pandemia o
+            # nível por fase já faz esse papel; i(ano, ...) para 2020–2021 repetiria o efeito fixo de fase
+            # (matriz singular em 25–29). O que importa aqui é separar o fim do boom de 2022 do efeito da IA.
+            if (d.chq_j != 0).any() or (d.boom_j != 0).any():
+                ano_ref = int(ref) // 10
+                termos = []
+                for y in sorted(int(v) for v in d.ano.unique() if int(v) > ano_ref):
+                    for c in ("chq_j", "boom_j"):
+                        d[f"{c}_{y}"] = d[c] * (d.ano == y)
+                        termos.append(f"{c}_{y}")
+                ctrl = "".join(f" + {t}" for t in termos)
     elif variante == "sem_pandemia":
         d = d[~d.t.between(a, z)]
     elif variante == "so_2022":
@@ -657,15 +667,19 @@ def _grafico_aceleracao(cfg, g, inclinacoes, titulo, arquivo):
     plt.close(fig)
 
 
-def rodar_aceleracao(cfg):
-    """Opção B do teste de pré-tendência: mudança de inclinação depois do ChatGPT, 4 variantes × 2 grupos."""
+def rodar_aceleracao(cfg, variantes=None):
+    """Opção B do teste de pré-tendência: mudança de inclinação depois do ChatGPT, 4 variantes × 2 grupos.
+
+    variantes: lista com parte das VARIANTES_ACEL para rodar só essas; as linhas delas são substituídas
+    no aceleracao.csv existente e as demais ficam como estavam."""
     painel = pd.read_parquet(caminho(cfg, "processed", "painel_principal.parquet"))
     ini = int(cfg["periodo"]["inicio"].replace("-", "")[:4]) * 10 + 1
+    escolhidas = {v: VARIANTES_ACEL[v] for v in (variantes or VARIANTES_ACEL)}
     res = []
     for chave, grupo in GRUPOS.items():
         df = preparar(cfg, painel, jovem_chave=chave)
         incl_graf = None
-        for var, desc in VARIANTES_ACEL.items():
+        for var, desc in escolhidas.items():
             try:
                 r, incl = _quebra_inclinacao(cfg, df, ini, var)
                 r["grupo"], r["descricao"] = grupo, desc
@@ -687,5 +701,10 @@ def rodar_aceleracao(cfg):
             except Exception as e:
                 log.warning("gráfico de aceleração %s falhou: %s", grupo, e)
     out = pd.concat(res)
-    out.to_csv(caminho(cfg, "outputs", "tabelas", "aceleracao.csv"), index=False)
+    arq = caminho(cfg, "outputs", "tabelas", "aceleracao.csv")
+    if variantes and arq.exists():  # rodada parcial: troca só as linhas das variantes refeitas
+        antigo = pd.read_csv(arq)
+        antigo = antigo[~antigo.modelo.isin([f"aceleracao_{v}" for v in escolhidas])]
+        out = pd.concat([antigo, out], ignore_index=True)
+    out.to_csv(arq, index=False)
     return out
