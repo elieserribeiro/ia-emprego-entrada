@@ -103,6 +103,9 @@ def _rot_t(t, lang):
 
 def _num(x, lang, casas=1):
     s = f"{x:.{casas}f}"
+    if float(s) == 0:
+        s = s.lstrip("-")
+    s = s.replace("-", "−")
     return s.replace(".", ",") if lang == "pt" else s
 
 
@@ -144,6 +147,13 @@ def _com_ref(df, refs):
 
 
 def _salvar(fig, pasta, nome):
+    if pasta.name == "pt":  # vírgula decimal nos eixos numéricos (os eixos de anos têm rótulos fixos)
+        from matplotlib.ticker import FuncFormatter, ScalarFormatter
+        fmt = FuncFormatter(lambda v, _: f"{v:g}".replace("-", "−").replace(".", ","))
+        for ax in fig.axes:
+            for eixo in (ax.xaxis, ax.yaxis):
+                if isinstance(eixo.get_major_formatter(), ScalarFormatter):
+                    eixo.set_major_formatter(fmt)
     fig.savefig(pasta / f"{nome}.png")
     plt.close(fig)
 
@@ -311,17 +321,17 @@ def figura6(cfg, lang, pasta):
 
 
 # --------------------------------------------------------------------------------------------- tabelas
-def _md(df: pd.DataFrame, titulo, nota=None):
+def _md(df: pd.DataFrame, titulo, nota=None, esquerda=1):
     cab = "| " + " | ".join(map(str, df.columns)) + " |"
-    sep = "|" + "|".join(["---"] + ["---:"] * (len(df.columns) - 1)) + "|"
+    sep = "|" + "|".join(["---"] * esquerda + ["---:"] * (len(df.columns) - esquerda)) + "|"
     linhas = ["| " + " | ".join(map(str, r)) + " |" for r in df.itertuples(index=False)]
     txt = f"**{titulo}**\n\n" + "\n".join([cab, sep] + linhas) + "\n"
     return txt + (f"\n{nota}\n" if nota else "")
 
 
-def _gravar(df, pasta, nome, titulo, nota=None):
+def _gravar(df, pasta, nome, titulo, nota=None, esquerda=1):
     df.to_csv(pasta / f"{nome}.csv", index=False)
-    (pasta / f"{nome}.md").write_text(_md(df, titulo, nota), encoding="utf-8")
+    (pasta / f"{nome}.md").write_text(_md(df, titulo, nota, esquerda), encoding="utf-8")
 
 
 def _tabela1_dados(cfg):
@@ -350,8 +360,12 @@ def tabelas(cfg, lang, pasta):
         t["saldo"] = t.adm - t.des
         cols = (["Ano", "Movimentações", "Admissões", "Desligamentos", "Saldo"] if lang == "pt"
                 else ["Year", "Records", "Hires", "Separations", "Net"])
-        out = pd.DataFrame({cols[0]: t.ano, cols[1]: t.linhas.map(mil), cols[2]: t.adm.map(mil),
-                            cols[3]: t.des.map(mil), cols[4]: t.saldo.map(lambda v: ("+" if v > 0 else "") + mil(v))})
+        ult = t.ano[t.ano != "Total"].astype(int).max()
+        anos = t.ano.map(lambda a: (f"{a} ({'jan–set' if lang == 'pt' else 'Jan–Sep'})" if str(a) == str(ult)
+                                    else a))
+        out = pd.DataFrame({cols[0]: anos, cols[1]: t.linhas.map(mil), cols[2]: t.adm.map(mil),
+                            cols[3]: t.des.map(mil),
+                            cols[4]: t.saldo.map(lambda v: ("+" if v > 0 else "") + mil(v).replace("-", "−"))})
         _gravar(out, pasta, "tabela1", "Tabela 1 – Movimentações do Novo CAGED, jan/2020–set/2026" if lang == "pt"
                 else "Table 1 – Novo CAGED records, Jan 2020–Sep 2026",
                 "Fonte: microdados do Novo CAGED (MTE). Elaboração própria." if lang == "pt"
@@ -386,7 +400,8 @@ def tabelas(cfg, lang, pasta):
         _gravar(pd.DataFrame(linhas, columns=cols), pasta, "tabela2",
                 "Tabela 2 – Validação dos microdados" if lang == "pt" else "Table 2 – Microdata validation",
                 "Fontes: MTE (Tabelas 5 e 5.1 do Novo CAGED); IBGE (PNAD Contínua, divulgações trimestrais)."
-                if lang == "pt" else "Sources: Ministry of Labor (Novo CAGED Tables 5 and 5.1); IBGE (PNAD Contínua releases).")
+                if lang == "pt" else "Sources: Ministry of Labor (Novo CAGED Tables 5 and 5.1); IBGE (PNAD Contínua releases).",
+                esquerda=2)
     # Tabela 3: resultados principais
     r = _tab(cfg, "modelos_principais.csv")
     if r is not None:
