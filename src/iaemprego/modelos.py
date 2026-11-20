@@ -883,3 +883,133 @@ def recalcular_holm(cfg):
     """Refaz só a correção de Holm e os gráficos a partir do diferencas_grupos.csv (sem rodar modelos)."""
     arq = caminho(cfg, "outputs", "tabelas", "diferencas_grupos.csv")
     return _salvar_diferencas(cfg, pd.read_csv(arq), arq)
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Event study da diferença racial: efeito real ou mudança no registro de raça/cor em 2024?
+# ---------------------------------------------------------------------------------------------------------
+# Em 2024 a raça "não informada" cai de ~27% para ~2% (e ~0% em 2025): quem não tinha raça passa a ser
+# registrado, em maioria como negra, e de forma desigual entre ocupações. Se a diferença negra − branca surge
+# de uma vez em 2024T1, é artefato do registro; se já cresce em 2023 (registro estável), há sinal de efeito.
+# Modelo empilhado (negra + branca), totalmente interagido, com um coeficiente Expo×Jovem por trimestre para
+# cada grupo (ref. 2022T3) e controles da pandemia por trimestre e grupo. Sem a sazonalidade
+# ocupação × idade × trimestre do ano (colinear com as dummies de trimestre, como no event study principal).
+INICIO_REGISTRO_RACA = 20241  # 1º trimestre com raça praticamente completa
+
+
+def _event_diferenca_raca(cfg, d, y):
+    from scipy import stats
+    ref, ini, _, chatgpt = _per(cfg)
+    niveis = ["branca", "negra"]
+    d = d[(d.t >= ini) & d[y].notna() & (d[y] >= 0) & d.valor.isin(niveis)].copy()
+    tem_ctrl = (d.chq_j != 0).any() or (d.boom_j != 0).any()
+    termos = []
+    for k, v in enumerate(niveis):
+        m = (d.valor == v).astype(float)
+        d[f"tr_{k}"] = d.treat * m
+        termos.append(f"i(t, tr_{k}, ref={ref})")
+        if tem_ctrl:
+            d[f"cq_{k}"], d[f"bm_{k}"] = d.chq_j * m, d.boom_j * m
+            termos += [f"i(t, cq_{k}, ref={ref})", f"i(t, bm_{k}, ref={ref})"]
+    ef = "cbo4:faixa:valor + cbo4:t:valor + faixa:t:valor"
+    fit = pf.fepois(f"{y} ~ {' + '.join(termos)} | {ef}", data=d, vcov={"CRV1": "cbo4"})
+    nomes = list(fit._coefnames)
+    b, V = np.asarray(fit.coef().values), np.asarray(fit._vcov)
+
+    def pos(k, t):
+        n = f"t::{t}:tr_{k}"
+        return nomes.index(n) if n in nomes else None
+
+    per = sorted({int(re.search(r"::(\d+)", n).group(1)) for n in nomes if ":tr_" in n})
+    linhas = []
+    for t in per:
+        pb, pn = pos(0, t), pos(1, t)
+        for nome, cvec in (("efeito::branca", {pb: 1}), ("efeito::negra", {pn: 1}),
+                           ("diferenca::negra-branca", {pn: 1, pb: -1})):
+            if None in cvec:
+                continue
+            c = np.zeros(len(b))
+            for i, w in cvec.items():
+                c[i] = w
+            r = _comb(nome, c, b, V, "evento_raca", fit._N, {})
+            r["periodo"] = t
+            linhas.append(r)
+
+    def media(ts):  # vetor da diferença média num conjunto de trimestres
+        c = np.zeros(len(b))
+        ok = [t for t in ts if pos(0, t) is not None and pos(1, t) is not None]
+        for t in ok:
+            c[pos(1, t)] += 1 / len(ok)
+            c[pos(0, t)] -= 1 / len(ok)
+        return c
+
+    pre = [t for t in per if t < chatgpt]                                  # 2022T1–T2 (pré-tendência)
+    p23 = [t for t in per if chatgpt < t < INICIO_REGISTRO_RACA]           # 2023: IA sim, registro antigo
+    p24 = [t for t in per if t >= INICIO_REGISTRO_RACA]                    # 2024+: registro novo
+    resumo = {"dif_media_pre_2022": media(pre), "dif_media_2023": media(p23),
+              "dif_media_2024_em_diante": media(p24), "salto_2024_menos_2023": media(p24) - media(p23)}
+    for nome, c in resumo.items():
+        linhas.append(_comb(nome, c, b, V, "evento_raca", fit._N, {}))
+    out = pd.DataFrame(linhas)
+    out["desfecho"] = y
+    return out
+
+
+def _grafico_evento_raca(cfg, tab, arquivo):
+    grupos = list(tab.grupo.unique())
+    desfs = list(tab.desfecho.unique())
+    fig, axes = plt.subplots(len(grupos), len(desfs), figsize=(5.2 * len(desfs), 3.4 * len(grupos)), squeeze=False)
+    chatgpt = cfg["periodo"]["trimestre_chatgpt"]
+    for i, g in enumerate(grupos):
+        for j, y in enumerate(desfs):
+            ax = axes[i, j]
+            s = tab[(tab.grupo == g) & (tab.desfecho == y) & (tab.termo == "diferenca::negra-branca")]
+            s = s.sort_values("periodo").reset_index(drop=True)
+            per = list(s.periodo.astype(int)) + [cfg["periodo"]["trimestre_referencia"]]
+            s = pd.concat([s, pd.DataFrame({"periodo": [per[-1]], "coef": [0.0], "ep": [0.0]})])
+            s = s.sort_values("periodo").reset_index(drop=True)
+            x = np.arange(len(s))
+            ax.axhline(0, color="0.5", lw=0.8)
+            for marco, cor, rot in ((chatgpt, "0.55", "ChatGPT"), (INICIO_REGISTRO_RACA, "#d0612a", "registro de raça")):
+                xm = x[s.periodo.astype(int) == marco]
+                if len(xm):
+                    ax.axvline(xm[0] - (0.5 if marco == INICIO_REGISTRO_RACA else 0), ls="--", color=cor, lw=1)
+                    ax.text(xm[0] - 0.4, ax.get_ylim()[1], rot, fontsize=7, color=cor, va="top", ha="right")
+            ax.errorbar(x, 100 * s.coef, yerr=196 * s.ep.fillna(0), fmt="o", color="#1f5fbf", capsize=2, ms=4)
+            marc = [k for k, v in enumerate(s.periodo) if int(v) % 10 == 1]
+            ax.set_xticks(marc, [f"{int(s.periodo[k]) // 10}T1" for k in marc], fontsize=8)
+            ax.set_title(f"Jovens {g.replace('_', '–')} · {y}: diferença negra − branca", fontsize=9)
+            ax.set_ylabel("p.p. (log × 100)")
+    fig.tight_layout()
+    fig.savefig(caminho(cfg, "outputs", "figuras", arquivo), dpi=200)
+    plt.close(fig)
+
+
+def rodar_evento_raca(cfg, desfechos=("adm", "adm_base")):
+    """Diferença negra − branca trimestre a trimestre, para 18–24 e 25–29."""
+    het = pd.read_parquet(caminho(cfg, "processed", "painel_heterogeneidade.parquet"))
+    h = het[het.dim == "raca"]
+    res = []
+    for chave, grupo in GRUPOS.items():
+        df = preparar(cfg, h, jovem_chave=chave)
+        df["valor"] = df.valor.astype(str)
+        for y in desfechos:
+            try:
+                r = _event_diferenca_raca(cfg, df, y)
+            except Exception as e:
+                log.warning("evento raça %s %s falhou: %s", grupo, y, e)
+                continue
+            r["grupo"] = grupo
+            res.append(r)
+            m = r.set_index("termo")
+            log.info("evento raça %s %s: dif. 2023 %+.4f (p=%.3f) | dif. 2024+ %+.4f (p=%.3f) | salto %+.4f (p=%.3f)",
+                     grupo, y, m.coef["dif_media_2023"], m.p["dif_media_2023"],
+                     m.coef["dif_media_2024_em_diante"], m.p["dif_media_2024_em_diante"],
+                     m.coef["salto_2024_menos_2023"], m.p["salto_2024_menos_2023"])
+    out = pd.concat(res, ignore_index=True)
+    out.to_csv(caminho(cfg, "outputs", "tabelas", "evento_raca.csv"), index=False)
+    try:
+        _grafico_evento_raca(cfg, out, "evento_raca.png")
+    except Exception as e:
+        log.warning("gráfico evento raça falhou: %s", e)
+    return out

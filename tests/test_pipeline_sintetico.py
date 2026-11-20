@@ -220,11 +220,16 @@ def test_pipeline_completo(cfg_sintetico):
         "modelo empilhado deve reproduzir a estimativa separada do grupo"
     assert dif.termo.str.startswith("diferenca::").any() and (dif.termo == "wald_todos_iguais").any()
     assert dif.p_holm.notna().any()
+    er = modelos.rodar_evento_raca(cfg, desfechos=("adm",))
+    s = er[(er.grupo == "18_24") & (er.termo == "salto_2024_menos_2023")]
+    print("evento raça 18–24: salto 2024 − 2023", s.coef.round(4).tolist(), "(sem diferença racial no DGP → ~0)")
+    assert len(s) == 1 and abs(s.coef.iloc[0]) < 4 * s.ep.iloc[0] + 0.02
+    assert (er.termo == "diferenca::negra-branca").sum() >= 10
     pnad.rodar(cfg)
     out = Path(cfg["_caminhos"]["outputs"])
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",
               "tabelas/pnad_desocupacao_faixa_superior.csv", "figuras/event_adm.png",
               "figuras/event_adm_serie_completa.png", "figuras/dupla_por_faixa.png",
-              "figuras/event_aprendizes_14_24.png", "figuras/event_25_29_adm.png", "figuras/pretendencia_25_29.png", "tabelas/pretendencia.csv", "tabelas/aceleracao.csv", "tabelas/diferencas_grupos.csv", "figuras/diferencas_grupos_25_29.png", "figuras/aceleracao_25_29.png", "figuras/indice_admissoes_quartil.png",
+              "figuras/event_aprendizes_14_24.png", "figuras/event_25_29_adm.png", "figuras/pretendencia_25_29.png", "tabelas/pretendencia.csv", "tabelas/aceleracao.csv", "tabelas/diferencas_grupos.csv", "tabelas/evento_raca.csv", "figuras/evento_raca.png", "figuras/diferencas_grupos_25_29.png", "figuras/aceleracao_25_29.png", "figuras/indice_admissoes_quartil.png",
               "tabelas/desc_indice_trimestral_movel4.csv", "validacao/cobertura_exposicao.csv"):
         assert (out / f).exists(), f
