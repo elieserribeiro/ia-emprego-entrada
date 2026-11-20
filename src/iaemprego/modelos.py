@@ -430,3 +430,127 @@ def rodar_robustez(cfg):
     out = pd.concat(res)
     out.to_csv(caminho(cfg, "outputs", "tabelas", "robustez.csv"), index=False)
     return out
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Pré-tendência: a queda pós-ChatGPT é maior do que a tendência que já vinha antes?
+# ---------------------------------------------------------------------------------------------------------
+def _idx(t):
+    """20201 -> 0, 20202 -> 1, ... (trimestres corridos desde 2020T1)."""
+    t = np.asarray(t, dtype=int)
+    return (t // 10 - 2020) * 4 + (t % 10) - 1
+
+
+def _tendencia_linear(cfg, df, ini):
+    """(a) Tripla diferença 2020T1+ com tendência linear própria de Expo × Jovem.
+
+    A tendência é identificada só no pré-ChatGPT (as dummies pós saturam 2023T1+), com nível próprio por
+    ocupação × idade em cada fase (pré, pandemia, pós-pandemia). O efeito pós é o desvio da tendência anterior."""
+    _, _, pos, chatgpt = _per(cfg)
+    d = df[df.t >= ini].copy()
+    d["treat_trend"] = d.treat * _idx(d.t)
+    d["t_ev"] = np.where(d.t >= pos, d.t, 0)
+    ef = FE + " + cbo4:faixa:fase"
+    fit = pf.fepois(f"adm ~ i(t_ev, treat, ref=0) + treat_trend | {ef}", data=d, vcov={"CRV1": "cbo4"})
+    ev = _tidy(fit, "tendencia_linear_event", "adm")
+    d2 = d[d.t != chatgpt]
+    fit2 = pf.fepois(f"adm ~ treat_post + treat_trend | {ef}{SAZ}", data=d2, vcov={"CRV1": "cbo4"})
+    po = _tidy(fit2, "tendencia_linear_pooled", "adm")
+    return pd.concat([ev[ev.termo.str.contains("treat")], po[po.termo.isin(["treat_post", "treat_trend"])]])
+
+
+def _extrapolacao(cfg, df, ini, sem_pandemia):
+    """(b) Extrapolação linear da pré-tendência (Rambachan & Roth, restrição de suavidade com M = 0).
+
+    Ajusta uma reta aos coeficientes pré-ChatGPT do event study 2020T1+ e mede, com a matriz de covariância
+    completa, quanto os coeficientes pós ficam abaixo dessa reta."""
+    ref, _, pos, chatgpt = _per(cfg)
+    d = df[df.t >= ini]
+    fit = pf.fepois(f"adm ~ i(t, treat, ref={ref}) | {FE}", data=d, vcov={"CRV1": "cbo4"})
+    nomes = list(fit._coefnames)
+    V = np.asarray(fit._vcov)
+    b = np.asarray(fit.coef().values)
+    per = np.array([int(re.search(r"::(\d+)", n).group(1)) for n in nomes])
+    a, z = cfg["periodo"]["pandemia"]
+    pre_m = (per < chatgpt) & (~((per >= a) & (per <= z)) if sem_pandemia else True)
+    pos_m = per >= pos
+    # pontos do ajuste: coeficientes pré + a referência (= 0, sem variância)
+    S = np.vstack([np.eye(len(b))[pre_m], np.zeros(len(b))])
+    xp = np.r_[_idx(per[pre_m]), _idx([ref])[0]]
+    X = np.c_[np.ones_like(xp), xp]
+    H = np.linalg.solve(X.T @ X, X.T) @ S                     # δ = H b
+    Xq = np.c_[np.ones(pos_m.sum()), _idx(per[pos_m])]
+    A = np.eye(len(b))[pos_m] - Xq @ H                        # desvios = A b
+    dev, Vd = A @ b, A @ V @ A.T
+    w = np.full(len(dev), 1 / len(dev))
+    media, ep = float(w @ dev), float(np.sqrt(w @ Vd @ w))
+    from scipy import stats
+    rot = "extrapolacao_sem_pandemia" if sem_pandemia else "extrapolacao_todos_pre"
+    linhas = [dict(termo=f"desvio::{p}", coef=dv, ep=float(np.sqrt(Vd[i, i])), periodo=p, var="treat", modelo=rot,
+                   desfecho="adm") for i, (p, dv) in enumerate(zip(per[pos_m], dev))]
+    linhas.append(dict(termo="desvio_medio_pos", coef=media, ep=ep, p=float(2 * stats.norm.sf(abs(media / ep))),
+                       ic_inf=media - 1.96 * ep, ic_sup=media + 1.96 * ep, var="treat", modelo=rot, desfecho="adm"))
+    linhas.append(dict(termo="inclinacao_pre_por_trimestre", coef=float((H @ b)[1]), var="treat", modelo=rot,
+                       desfecho="adm"))
+    out = pd.DataFrame(linhas)
+    out["ic_inf"] = out.ic_inf.fillna(out.coef - 1.96 * out.ep)
+    out["ic_sup"] = out.ic_sup.fillna(out.coef + 1.96 * out.ep)
+    # dados para o gráfico: coeficientes e reta extrapolada
+    graf = pd.DataFrame({"periodo": np.r_[per, ref], "coef": np.r_[b, 0.0],
+                         "ep": np.r_[np.sqrt(np.diag(V)), 0.0]}).sort_values("periodo")
+    delta = H @ b
+    graf["reta"] = delta[0] + delta[1] * _idx(graf.periodo)
+    return out, graf
+
+
+def _grafico_tendencia(cfg, graf, titulo, arquivo):
+    g = graf.reset_index(drop=True)
+    x = np.arange(len(g))
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.axhline(0, color="0.5", lw=0.8)
+    a, z = cfg["periodo"]["pandemia"]
+    dentro = x[(g.periodo >= a) & (g.periodo <= z)]
+    if len(dentro):
+        ax.axvspan(dentro.min() - 0.5, dentro.max() + 0.5, color="0.92", zorder=0)
+    cg = x[g.periodo == cfg["periodo"]["trimestre_chatgpt"]]
+    if len(cg):
+        ax.axvline(cg[0], ls="--", color="0.55", lw=0.9)
+    ax.errorbar(x, g.coef, yerr=1.96 * g.ep, fmt="o", color="#1f5fbf", capsize=2, ms=4, label="coeficiente")
+    ax.plot(x, g.reta, color="#d0612a", lw=1.5, label="tendência pré-ChatGPT extrapolada")
+    marc = [i for i, v in enumerate(g.periodo) if int(v) % 10 == 1]
+    ax.set_xticks(marc, [f"{int(g.periodo[i]) // 10}T1" for i in marc])
+    ax.set_ylabel("coeficiente (log, PPML)")
+    ax.set_title(titulo, fontsize=10)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(caminho(cfg, "outputs", "figuras", arquivo), dpi=200)
+    plt.close(fig)
+
+
+def rodar_pretendencia(cfg):
+    painel = pd.read_parquet(caminho(cfg, "processed", "painel_principal.parquet"))
+    ini = int(cfg["periodo"]["inicio"].replace("-", "")[:4]) * 10 + 1
+    res = []
+    for chave, grupo in GRUPOS.items():
+        df = preparar(cfg, painel, jovem_chave=chave)
+        tarefas = [("tendência linear", lambda: _tendencia_linear(cfg, df, ini))]
+        for sem_p in (False, True):
+            tarefas.append((f"extrapolação (sem pandemia={sem_p})", lambda s=sem_p: _extrapolacao(cfg, df, ini, s)))
+        for nome, f in tarefas:
+            try:
+                r = f()
+                if isinstance(r, tuple):
+                    r, graf = r
+                    if "sem_pandemia" in r.modelo.iloc[0]:
+                        rot = grupo.replace("_", "–")
+                        _grafico_tendencia(cfg, graf, f"Jovens {rot}: coeficientes vs. tendência pré-ChatGPT "
+                                                      f"(sem trimestres da pandemia no ajuste)",
+                                           f"pretendencia_{grupo}.png")
+                r["grupo"] = grupo
+                res.append(r)
+                log.info("pré-tendência %s: %s ok", grupo, nome)
+            except Exception as e:
+                log.warning("pré-tendência %s: %s falhou: %s", grupo, nome, e)
+    out = pd.concat(res)
+    out.to_csv(caminho(cfg, "outputs", "tabelas", "pretendencia.csv"), index=False)
+    return out
