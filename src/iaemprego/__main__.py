@@ -8,13 +8,14 @@ Etapas, na ordem:
   descritivas                                  (Etapa 5)
   modelos        heterogeneidade  robustez  pretendencia  aceleracao  diferencas  evento-raca   (Etapas 6, 7 e 9)
   pnad                                         (Etapa 8)
+  mercado                                      (Etapa 10: mercado como um todo)
   tudo           roda da ingestão aos modelos (sem downloads)
 """
 import argparse
 import sys
 import time
 
-from . import caged, descritivas, download, exposicao, modelos, painel, pnad
+from . import caged, descritivas, download, exposicao, mercado, modelos, painel, pnad
 from .util import carregar_config, configurar_log, log
 
 ETAPAS = {
@@ -34,8 +35,9 @@ ETAPAS = {
     "diferencas": modelos.rodar_diferencas,
     "evento-raca": modelos.rodar_evento_raca,
     "pnad": pnad.rodar,
+    "mercado": mercado.rodar,
 }
-TUDO = ["ingerir", "validar", "exposicao", "painel", "descritivas", "modelos", "heterogeneidade", "robustez", "pretendencia", "aceleracao", "diferencas", "evento-raca", "pnad"]
+TUDO = ["ingerir", "validar", "exposicao", "painel", "descritivas", "modelos", "heterogeneidade", "robustez", "pretendencia", "aceleracao", "diferencas", "evento-raca", "pnad", "mercado"]
 
 
 def main(argv=None):

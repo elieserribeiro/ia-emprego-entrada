@@ -162,7 +162,7 @@ def cfg_sintetico(tmp_path_factory):
 
 
 def test_pipeline_completo(cfg_sintetico):
-    from iaemprego import caged, descritivas, exposicao, modelos, painel, pnad
+    from iaemprego import caged, descritivas, exposicao, mercado, modelos, painel, pnad
     cfg = cfg_sintetico
     caged.ingerir(cfg)
     val = caged.validar(cfg)
@@ -229,9 +229,15 @@ def test_pipeline_completo(cfg_sintetico):
     assert len(s) == 1 and abs(s.coef.iloc[0]) < 4 * s.ep.iloc[0] + 0.02
     assert (er.termo == "diferenca::negra-branca").sum() >= 10
     pnad.rodar(cfg)
+    mer = mercado.rodar(cfg)
+    m = mer[(mer.fonte == "CAGED") & (mer.desfecho == "adm") & (mer.modelo == "mercado_pooled")]
+    print("mercado (todas as idades) CAGED adm:", m.coef.round(3).tolist(), "| PNAD:",
+          mer[(mer.fonte == "PNAD") & (mer.modelo == "mercado_pooled")][["desfecho", "coef"]].round(3).values.tolist())
+    assert len(m) == 1 and m.coef.iloc[0] < 0, "DGP: queda nos jovens das ocupações expostas puxa o total para baixo"
+    assert (mer.modelo == "mercado_event").any() and (mer.fonte == "PNAD").any()
     out = Path(cfg["_caminhos"]["outputs"])
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",
-              "tabelas/pnad_desocupacao_faixa_superior.csv", "tabelas/pnad_modelos.csv", "validacao/pnad_taxas_brasil.csv", "figuras/event_adm.png",
+              "tabelas/pnad_desocupacao_faixa_superior.csv", "tabelas/pnad_modelos.csv", "tabelas/mercado.csv", "figuras/mercado_caged.png", "validacao/pnad_taxas_brasil.csv", "figuras/event_adm.png",
               "figuras/event_adm_serie_completa.png", "figuras/dupla_por_faixa.png",
               "figuras/event_aprendizes_14_24.png", "figuras/event_25_29_adm.png", "figuras/pretendencia_25_29.png", "tabelas/pretendencia.csv", "tabelas/aceleracao.csv", "tabelas/diferencas_grupos.csv", "tabelas/evento_raca.csv", "figuras/evento_raca.png", "figuras/diferencas_grupos_25_29.png", "figuras/aceleracao_25_29.png", "figuras/indice_admissoes_quartil.png",
               "tabelas/desc_indice_trimestral_movel4.csv", "validacao/cobertura_exposicao.csv"):
