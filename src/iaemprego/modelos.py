@@ -725,7 +725,7 @@ TESTES_GRUPOS = {
     "instrucao": ["medio", "superior"],
     "nordeste": ["resto", "NE"],
     "rn": ["resto", "RN"],
-    "regiao": None,  # todos os valores presentes
+    "regiao": ["1", "2", "3", "4", "5"],  # Norte, Nordeste, Sudeste, Sul, Centro-Oeste (fora: não identificada)
 }
 DESFECHOS_GRUPOS = ("adm", "adm_sup", "adm_base")
 
@@ -760,6 +760,11 @@ def _teste_diferenca(cfg, d, y, niveis):
     fit = pf.fepois(f"{y} ~ {' + '.join(termos + ctrl)} | {ef}", data=d, vcov={"CRV1": "cbo4"})
     nomes = list(fit._coefnames)
     b, V = np.asarray(fit.coef().values), np.asarray(fit._vcov)
+    sobra = [(t, v) for t, v in zip(termos, niveis) if t in nomes]  # grupo sem dados/colinear sai do teste
+    if len(sobra) < len(termos):
+        log.warning("diferenças %s: grupos sem estimativa removidos: %s", y,
+                    [v for t, v in zip(termos, niveis) if t not in nomes])
+    termos, niveis = [t for t, _ in sobra], [v for _, v in sobra]
     idx = [nomes.index(t) for t in termos]
     linhas = []
     for k, v in enumerate(niveis):  # efeito de cada grupo
@@ -830,9 +835,10 @@ def rodar_diferencas(cfg, grupos=None, dims=None):
             if dims and dim not in dims:
                 continue
             h = het[het.dim == dim]
-            nv = niveis or sorted(v for v in h.valor.astype(str).unique() if v not in ("None", "nan", "<NA>", "9"))
+            presentes = set(h.valor.astype(str).str.replace(r"\.0$", "", regex=True).unique())
+            nv = [v for v in niveis if v in presentes] if niveis else sorted(presentes)
             df = preparar(cfg, h, jovem_chave=chave)
-            df["valor"] = df.valor.astype(str)
+            df["valor"] = df.valor.astype(str).str.replace(r"\.0$", "", regex=True)
             for y in DESFECHOS_GRUPOS:
                 if dim == "instrucao" and y == "adm_sup":
                     continue  # "superior" é a própria divisão
@@ -847,16 +853,17 @@ def rodar_diferencas(cfg, grupos=None, dims=None):
                 log.info("diferenças %s %s %s: %s", grupo, dim, y,
                          "; ".join(f"{a} {c:+.4f} (p={p:.3f})" for a, c, p in zip(d.termo, d.coef, d.p)))
     out = pd.concat(res, ignore_index=True)
-    teste = out.termo.str.match(r"diferenca::|wald_")
-    out["p_holm"] = np.nan
-    for _, idx in out[teste].groupby(["grupo", "desfecho"]).groups.items():
-        out.loc[idx, "p_holm"] = _holm(out.loc[idx, "p"])
     arq = caminho(cfg, "outputs", "tabelas", "diferencas_grupos.csv")
     if (grupos or dims) and arq.exists():  # rodada parcial: troca só as linhas refeitas
         antigo = pd.read_csv(arq)
         chaves = set(zip(out.grupo, out.dim))
         antigo = antigo[[(g, d) not in chaves for g, d in zip(antigo.grupo, antigo.dim)]]
         out = pd.concat([antigo, out], ignore_index=True)
+    # Holm sobre a tabela completa (inclusive linhas de rodadas anteriores), por grupo etário × desfecho
+    teste = out.termo.str.match(r"diferenca::|wald_")
+    out["p_holm"] = np.nan
+    for _, idx in out[teste].groupby(["grupo", "desfecho"]).groups.items():
+        out.loc[idx, "p_holm"] = _holm(out.loc[idx, "p"])
     out.to_csv(arq, index=False)
     for g in out.grupo.unique():
         try:
