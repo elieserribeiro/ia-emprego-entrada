@@ -235,9 +235,12 @@ def test_pipeline_completo(cfg_sintetico):
           mer[(mer.fonte == "PNAD") & (mer.modelo == "mercado_pooled")][["desfecho", "coef"]].round(3).values.tolist())
     assert len(m) == 1 and m.coef.iloc[0] < 0, "DGP: queda nos jovens das ocupações expostas puxa o total para baixo"
     assert (mer.modelo == "mercado_event").any() and (mer.fonte == "PNAD").any()
+    ss = mer[(mer.desfecho == "adm") & (mer.modelo == "mercado_pooled_shift_share")]
+    print("mercado CAGED adm com controle setorial:", ss.coef.round(3).tolist())
+    assert len(ss) == 1, "modelo com controle de ciclo setorial (shift-share)"
     out = Path(cfg["_caminhos"]["outputs"])
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",
-              "tabelas/pnad_desocupacao_faixa_superior.csv", "tabelas/pnad_modelos.csv", "tabelas/mercado.csv", "figuras/mercado_caged.png", "validacao/pnad_taxas_brasil.csv", "figuras/event_adm.png",
+              "tabelas/pnad_desocupacao_faixa_superior.csv", "tabelas/pnad_modelos.csv", "tabelas/mercado.csv", "figuras/mercado_caged.png", "figuras/mercado_shift_share.png", "validacao/pnad_taxas_brasil.csv", "figuras/event_adm.png",
               "figuras/event_adm_serie_completa.png", "figuras/dupla_por_faixa.png",
               "figuras/event_aprendizes_14_24.png", "figuras/event_25_29_adm.png", "figuras/pretendencia_25_29.png", "tabelas/pretendencia.csv", "tabelas/aceleracao.csv", "tabelas/diferencas_grupos.csv", "tabelas/evento_raca.csv", "figuras/evento_raca.png", "figuras/diferencas_grupos_25_29.png", "figuras/aceleracao_25_29.png", "figuras/indice_admissoes_quartil.png",
               "tabelas/desc_indice_trimestral_movel4.csv", "validacao/cobertura_exposicao.csv"):
