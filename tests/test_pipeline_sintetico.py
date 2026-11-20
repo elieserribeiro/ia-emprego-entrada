@@ -114,7 +114,7 @@ def _gerar_caged(raw: Path, ref: Path):
 
 
 PNAD_LAYOUT = [("Ano", 4), ("Trimestre", 1), ("UF", 2), ("V1028", 15), ("V2007", 1), ("V2009", 3), ("V2010", 1),
-               ("VD3004", 1), ("VD4001", 1), ("VD4002", 1), ("V4010", 4), ("VD4009", 2), ("V4040", 1)]
+               ("VD3004", 1), ("VD4001", 1), ("VD4002", 1), ("V4010", 4), ("VD4009", 2), ("V4019", 1), ("V4040", 1)]
 
 
 def _gerar_pnad(raw: Path):
@@ -137,7 +137,10 @@ def _gerar_pnad(raw: Path):
             for k in range(n):
                 vals = [str(ano), str(t), "24", f"{rng.uniform(500, 1500):015.4f}", "1", f"{idade[k]:03d}", "1",
                         str(rng.choice([5, 7])), "1", "1" if ocup[k] else "2",
-                        rng.choice(cods) if ocup[k] else "    ", "01", str(rng.choice([1, 2, 3, 4])) if ocup[k] else " "]
+                        rng.choice(cods) if ocup[k] else "    ",
+                        str(rng.choice(["01", "02", "09"])) if ocup[k] else "  ",
+                        str(rng.choice([1, 2])) if ocup[k] else " ",
+                        str(rng.choice([1, 2, 3, 4])) if ocup[k] else " "]
                 reg.append("".join(v.rjust(w) if v.strip() else " " * w for v, (_, w) in zip(vals, PNAD_LAYOUT)))
             with zipfile.ZipFile(raw / "pnad" / f"PNADC_0{t}{ano}.zip", "w") as zf:
                 zf.writestr(f"PNADC_0{t}{ano}.txt", "\n".join(reg))
@@ -228,7 +231,7 @@ def test_pipeline_completo(cfg_sintetico):
     pnad.rodar(cfg)
     out = Path(cfg["_caminhos"]["outputs"])
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",
-              "tabelas/pnad_desocupacao_faixa_superior.csv", "figuras/event_adm.png",
+              "tabelas/pnad_desocupacao_faixa_superior.csv", "tabelas/pnad_modelos.csv", "validacao/pnad_taxas_brasil.csv", "figuras/event_adm.png",
               "figuras/event_adm_serie_completa.png", "figuras/dupla_por_faixa.png",
               "figuras/event_aprendizes_14_24.png", "figuras/event_25_29_adm.png", "figuras/pretendencia_25_29.png", "tabelas/pretendencia.csv", "tabelas/aceleracao.csv", "tabelas/diferencas_grupos.csv", "tabelas/evento_raca.csv", "figuras/evento_raca.png", "figuras/diferencas_grupos_25_29.png", "figuras/aceleracao_25_29.png", "figuras/indice_admissoes_quartil.png",
               "tabelas/desc_indice_trimestral_movel4.csv", "validacao/cobertura_exposicao.csv"):
