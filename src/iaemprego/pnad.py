@@ -79,7 +79,6 @@ def ler_trimestres(cfg):
     for zarq in sorted(Path(cfg["_caminhos"]["raw"], "pnad").glob("PNADC_0*.zip")):
         saida = caminho(cfg, "interim", "pnad", zarq.stem + ".parquet")
         if saida.exists():
-            existentes = set(pd.read_parquet(saida, columns=None).columns) if saida.stat().st_size < 1 else None
             import pyarrow.parquet as pq
             if set(usar) <= set(pq.read_schema(saida).names):
                 continue  # já lido com todas as variáveis
@@ -93,7 +92,7 @@ def ler_trimestres(cfg):
                               FROM read_csv('{txt.as_posix()}', columns={{'l': 'VARCHAR'}}, delim='|',
                                             header=false, quote='', escape='', auto_detect=false))
                         TO '{saida.as_posix()}' (FORMAT parquet, COMPRESSION zstd)""")
-            n = con.sql(f"SELECT count(*) FROM read_parquet('{saida.as_posix()}')").fetchone()[0]
+            n = con.sql(f"SELECT count(*) FROM read_parquet('{saida.as_posix()}')").fetchall()[0][0]
             con.close()
             log.info("%s -> %d pessoas", zarq.name, n)
         finally:
@@ -107,15 +106,13 @@ def _faixa(cfg, idade: pd.Series) -> pd.Series:
     return out
 
 
-def _carregar(cfg) -> pd.DataFrame:
-    arqs = sorted(Path(cfg["_caminhos"]["interim"], "pnad").glob("*.parquet"))
-    if not arqs:
-        return pd.DataFrame()
-    df = pd.concat((pd.read_parquet(a) for a in arqs), ignore_index=True)
+MEDIDAS = ["forca", "desoc", "ocup", "formal", "informal", "recente", "recente_formal", "recente_informal"]
+
+
+def _medidas(cfg, df: pd.DataFrame) -> pd.DataFrame:
     df = df[df.V2009 >= 14].copy()
-    df["t"] = df.Ano * 10 + df.Trimestre
-    df["tri"] = df.Trimestre
-    df["ano"] = df.Ano
+    df["t"] = (df.Ano * 10 + df.Trimestre).astype(int)
+    df["ano"], df["tri"] = df.Ano.astype(int), df.Trimestre.astype(int)
     df["faixa"] = _faixa(cfg, df.V2009)
     df["superior"] = (df.VD3004 == 7).astype(int)
     w = df.V1028.fillna(0.0)
@@ -132,11 +129,27 @@ def _carregar(cfg) -> pd.DataFrame:
     df["recente"] = (oc & rec) * w
     df["recente_formal"] = (oc & rec & ~informal) * w
     df["recente_informal"] = (oc & rec & informal) * w
+    df["cod4"] = df.V4010.fillna("").astype(str).str.strip().str.zfill(4)
     return df
 
 
-def _validacao(cfg, df):
-    v = df.groupby("t")[["forca", "desoc", "ocup", "informal"]].sum()
+def _carregar(cfg):
+    """Lê um trimestre por vez e já agrega (pouca memória). Devolve:
+    tf: t × faixa × superior (desocupação/informalidade) e pc: t × cod4 × faixa (painel de ocupações)."""
+    arqs = sorted(Path(cfg["_caminhos"]["interim"], "pnad").glob("*.parquet"))
+    tf, pc = [], []
+    for a in arqs:
+        df = _medidas(cfg, pd.read_parquet(a))
+        tf.append(df.groupby(["t", "faixa", "superior"])[MEDIDAS].sum().reset_index())
+        o = df[(df.ocup > 0) & df.faixa.notna()]
+        pc.append(o.groupby(["t", "ano", "tri", "cod4", "faixa"])[list(DESFECHOS_PNAD)].sum().reset_index())
+    if not tf:
+        return pd.DataFrame(), pd.DataFrame()
+    return pd.concat(tf, ignore_index=True), pd.concat(pc, ignore_index=True)
+
+
+def _validacao(cfg, tf):
+    v = tf.groupby("t")[["forca", "desoc", "ocup", "informal"]].sum()
     v["taxa_desocupacao_%"] = 100 * v.desoc / v.forca
     v["taxa_informalidade_%"] = 100 * v.informal / v.ocup
     v[["ocup", "desoc", "forca"]] = v[["ocup", "desoc", "forca"]] / 1e6
@@ -144,7 +157,7 @@ def _validacao(cfg, df):
     v = v.drop(columns="informal").round(2).reset_index()
     v.to_csv(caminho(cfg, "outputs", "validacao", "pnad_taxas_brasil.csv"), index=False)
     log.info("PNAD validação (compare com o IBGE):\n%s", v.to_string(index=False))
-    t = df.groupby(["t", "faixa", "superior"])[["forca", "desoc", "ocup", "informal"]].sum().reset_index()
+    t = tf.groupby(["t", "faixa", "superior"])[["forca", "desoc", "ocup", "informal"]].sum().reset_index()
     t["taxa_desocupacao_%"] = 100 * t.desoc / t.forca
     t["taxa_informalidade_%"] = 100 * t.informal / t.ocup
     t.to_csv(caminho(cfg, "outputs", "tabelas", "pnad_desocupacao_faixa_superior.csv"), index=False)
@@ -175,12 +188,10 @@ def _exposicao(cfg, p: pd.DataFrame, nivel: int = 4) -> pd.DataFrame:
     return p
 
 
-def _painel(cfg, df, nivel=4):
-    oc = df[df.ocup > 0].copy()
-    oc["cod"] = oc.V4010.astype(str).str.strip().str.zfill(4).str[:nivel]
-    oc = oc[oc.cod.str.match(r"^\d+$") & (oc.cod.str[:1] != "0")]  # sem forças armadas / código inválido
-    medidas = list(DESFECHOS_PNAD)
-    p = oc.dropna(subset=["faixa"]).groupby(["t", "ano", "tri", "cod", "faixa"])[medidas].sum().reset_index()
+def _painel(cfg, pc, nivel=4):
+    p = pc[pc.cod4.str.match(r"^\d{4}$") & (pc.cod4.str[:1] != "0")].copy()  # sem forças armadas/inválidos
+    p["cod"] = p.cod4.str[:nivel]
+    p = p.groupby(["t", "ano", "tri", "cod", "faixa"])[list(DESFECHOS_PNAD)].sum().reset_index()
     return _exposicao(cfg, p, nivel)
 
 
@@ -215,14 +226,14 @@ def _tripla(cfg, p, jov, y, pooled, rotulo, fase=False):
 def rodar(cfg):
     from .modelos import GRUPOS, grafico_event
     ler_trimestres(cfg)
-    df = _carregar(cfg)
-    if df.empty:
+    tf, pc = _carregar(cfg)
+    if tf.empty:
         log.warning("PNAD: nenhum trimestre lido")
         return
-    _validacao(cfg, df)
-    p4 = _painel(cfg, df, 4)
+    _validacao(cfg, tf)
+    p4 = _painel(cfg, pc, 4)
     p4.to_parquet(caminho(cfg, "processed", "painel_pnad.parquet"), index=False)
-    p3 = _painel(cfg, df, 3)
+    p3 = _painel(cfg, pc, 3)
     extra = {"jovem_25_29": ["25_29"]}
     res = []
     for chave, grupo in GRUPOS.items():
