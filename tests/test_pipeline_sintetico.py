@@ -162,7 +162,7 @@ def cfg_sintetico(tmp_path_factory):
 
 
 def test_pipeline_completo(cfg_sintetico):
-    from iaemprego import caged, descritivas, exposicao, mercado, modelos, painel, pnad
+    from iaemprego import caged, descritivas, exposicao, figuras, mercado, modelos, painel, pnad
     cfg = cfg_sintetico
     caged.ingerir(cfg)
     val = caged.validar(cfg)
@@ -238,6 +238,13 @@ def test_pipeline_completo(cfg_sintetico):
     ss = mer[(mer.desfecho == "adm") & (mer.modelo == "mercado_pooled_shift_share")]
     print("mercado CAGED adm com controle setorial:", ss.coef.round(3).tolist())
     assert len(ss) == 1, "modelo com controle de ciclo setorial (shift-share)"
+    figuras.rodar(cfg)
+    art = Path(cfg["_caminhos"]["outputs"]) / "artigo"
+    for lang in ("pt", "en"):
+        for f in [f"figura{i}.png" for i in range(1, 7)] + [f"tabela{i}.md" for i in range(1, 6)]:
+            assert (art / lang / f).exists(), f"{lang}/{f}"
+    import shutil as _sh
+    _sh.copytree(art, Path("/tmp/artigo_teste"), dirs_exist_ok=True) if Path("/tmp").exists() else None
     out = Path(cfg["_caminhos"]["outputs"])
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",
               "tabelas/pnad_desocupacao_faixa_superior.csv", "tabelas/pnad_modelos.csv", "tabelas/mercado.csv", "figuras/mercado_caged.png", "figuras/mercado_shift_share.png", "validacao/pnad_taxas_brasil.csv", "figuras/event_adm.png",
