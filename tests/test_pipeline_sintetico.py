@@ -162,7 +162,7 @@ def cfg_sintetico(tmp_path_factory):
 
 
 def test_pipeline_completo(cfg_sintetico):
-    from iaemprego import caged, descritivas, exposicao, figuras, mercado, modelos, painel, pnad
+    from iaemprego import caged, descritivas, exposicao, figuras, mercado, modelos, painel, pnad, vagas
     cfg = cfg_sintetico
     caged.ingerir(cfg)
     val = caged.validar(cfg)
@@ -238,6 +238,9 @@ def test_pipeline_completo(cfg_sintetico):
     ss = mer[(mer.desfecho == "adm") & (mer.modelo == "mercado_pooled_shift_share")]
     print("mercado CAGED adm com controle setorial:", ss.coef.round(3).tolist())
     assert len(ss) == 1, "modelo com controle de ciclo setorial (shift-share)"
+    vg = vagas.rodar(cfg).set_index("faixa")
+    print("vagas não abertas (pooled):", vg.nao_abertas_pooled.round(0).to_dict())
+    assert vg.loc["18_24", "nao_abertas_pooled"] > 0, "DGP: efeito negativo em 18–24 → vagas não abertas > 0"
     figuras.rodar(cfg)
     art = Path(cfg["_caminhos"]["outputs"]) / "artigo"
     for lang in ("pt", "en"):
@@ -247,7 +250,7 @@ def test_pipeline_completo(cfg_sintetico):
     _sh.copytree(art, Path("/tmp/artigo_teste"), dirs_exist_ok=True) if Path("/tmp").exists() else None
     out = Path(cfg["_caminhos"]["outputs"])
     for f in ("tabelas/modelos_principais.csv", "tabelas/robustez.csv", "tabelas/heterogeneidade.csv",
-              "tabelas/pnad_desocupacao_faixa_superior.csv", "tabelas/pnad_modelos.csv", "tabelas/mercado.csv", "figuras/mercado_caged.png", "figuras/mercado_shift_share.png", "validacao/pnad_taxas_brasil.csv", "figuras/event_adm.png",
+              "tabelas/pnad_desocupacao_faixa_superior.csv", "tabelas/pnad_modelos.csv", "tabelas/mercado.csv", "tabelas/vagas_nao_abertas_resumo.csv", "tabelas/vagas_nao_abertas_trimestre.csv", "figuras/mercado_caged.png", "figuras/mercado_shift_share.png", "validacao/pnad_taxas_brasil.csv", "figuras/event_adm.png",
               "figuras/event_adm_serie_completa.png", "figuras/dupla_por_faixa.png",
               "figuras/event_aprendizes_14_24.png", "figuras/event_25_29_adm.png", "figuras/pretendencia_25_29.png", "tabelas/pretendencia.csv", "tabelas/aceleracao.csv", "tabelas/diferencas_grupos.csv", "tabelas/evento_raca.csv", "figuras/evento_raca.png", "figuras/diferencas_grupos_25_29.png", "figuras/aceleracao_25_29.png", "figuras/indice_admissoes_quartil.png",
               "tabelas/desc_indice_trimestral_movel4.csv", "validacao/cobertura_exposicao.csv"):

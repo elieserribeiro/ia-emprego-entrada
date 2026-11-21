@@ -1,6 +1,15 @@
-# IA generativa e emprego de entrada no Brasil
+# Ponte estreita: IA generativa, mercado de trabalho e a entrada de jovens na carreira no Brasil, 2020–2026
 
-**Pergunta:** a IA generativa reduziu as oportunidades de entrada (jovens, primeiro emprego, recém-formados, base da escada salarial) nas ocupações mais expostas?
+Código do artigo *Ponte estreita: o impacto da inteligência artificial no mercado de trabalho e na entrada de jovens na carreira no Brasil, 2020–2026* (Eliéser Ribeiro, 2026), também em inglês como *Narrow Bridge*.
+
+**Perguntas:** (P1) a IA generativa está afetando o mercado de trabalho brasileiro como um todo? (P2) está tirando dos jovens a primeira entrada no mercado de trabalho?
+
+**Principais resultados (dados até 2026T3):**
+- Mercado como um todo: o emprego nas ocupações expostas não cai (PNAD +2,1% por DP de exposição); a rotatividade cai; a contratação de diplomados cai 5,6%; o salário de admissão cai 1,1%.
+- 18–24 anos: nenhum efeito, em todas as especificações.
+- 25–29 anos: −2,4% por DP de exposição (−6,3% no quartil mais exposto), queda gradual desde 2023, sem migração para a informalidade (PNAD: recém-entrados −2,9%, formais −4,2%). Cerca de **148 mil vagas a menos** de 2023 a set/2026 (IC 95%: 25 a 273 mil).
+- Maior entre mulheres com superior, pessoas negras, Sudeste e Centro-Oeste (diferenças com correção de Holm).
+
 **Desenho:** diferença tripla em *event study* trimestral, com jovens × adultos e mais × menos expostos à IA. Usa todos os meses do Novo CAGED desde jan/2020, agregados em trimestres. O modelo principal começa em 2022T1, a referência é 2022T3 (último trimestre inteiro antes do ChatGPT), e 2022T4 é transição. A pandemia é isolada com controles medidos no próprio CAGED (ver abaixo). As fontes são os microdados do Novo CAGED e da PNAD Contínua, e a exposição vem do índice OIT 2025.
 
 ## 0. Instalar (Windows + VS Code)
@@ -33,7 +42,17 @@ O teste gera microdados mensais falsos (jan/2020–jun/2026) com três coisas: u
 | 8 | `python -m iaemprego pnad` | desocupação de jovens com superior por trimestre; ocupados e recém-entrados por ocupação (mesmo desenho trimestral) | `pnad_*.csv`, figuras |
 | 9 | `python -m iaemprego robustez` | sem controles da pandemia; série completa e desde 2021 com efeito fixo por fase; base 2023; só 1º semestres; jovem 18–29; exposição alternativa; sem imputadas; sem adm. pública/TI; sem aprendiz/intermitente; só MOV | `robustez.csv` |
 
-`python -m iaemprego tudo` roda as etapas 2 a 9, sem os downloads.
+| 10 | `python -m iaemprego pretendencia` | tendência linear antes do ChatGPT e extrapolação (Rambachan-Roth, M = 0) | `pretendencia.csv`, figura |
+| 10 | `python -m iaemprego aceleracao` | quebra de inclinação em 2022T4 (25–29), em quatro tratamentos da pandemia | `aceleracao.csv`, figura |
+| 11 | `python -m iaemprego diferencas` | diferenças formais entre grupos (modelo empilhado; Wald para regiões; correção de Holm) | `diferencas_grupos.csv`, figura |
+| 11 | `python -m iaemprego evento-raca` | diferença negra − branca trimestre a trimestre (checa a mudança no registro de raça em 2024) | `evento_raca.csv`, figura |
+| 12 | `python -m iaemprego mercado` | mercado como um todo: dupla diferença entre ocupações, todas as idades, com controle de ciclo setorial (*shift-share*) | `mercado.csv`, figuras |
+| 13 | `python -m iaemprego vagas` | vagas de jovens não abertas, em números absolutos: ocupações acima da média de exposição × contrafactual de exposição média | `vagas_nao_abertas_resumo.csv`, `vagas_nao_abertas_trimestre.csv` |
+| 14 | `python -m iaemprego figuras` | figuras e tabelas finais do artigo, em português e inglês | `outputs/artigo/pt/`, `outputs/artigo/en/` |
+
+`python -m iaemprego tudo` roda todas as etapas a partir da ingestão, sem os downloads.
+
+**Convenção dos números do artigo:** efeitos em "%" são 100 × coeficiente PPML, por desvio-padrão de exposição (DP = 0,17 na nota da OIT, ponderada pelas admissões).
 
 **Antes da Etapa 4:** confira `outputs/validacao/frequencias_codigos.csv` e o layout oficial baixado na Etapa 1. Os códigos da seção `codigos` do `config.yaml` precisam bater com eles: primeiro emprego, superior completo, sexo, raça, aprendiz. Se "primeiro emprego" (código 10) quase não aparecer, essa medida sai da análise, e o modelo pula sozinho desfechos sem dados.
 
@@ -99,7 +118,8 @@ e componente para o Lovable. Veja `painel_ia/README.md`.
 
 ```
 config.yaml          períodos (trimestres, janelas da pandemia), faixas etárias, códigos
-src/iaemprego/       download, caged (ingestão/validação), exposicao, painel, descritivas, modelos, pnad
+src/iaemprego/       download, caged (ingestão/validação), exposicao, painel, descritivas, modelos, pnad,
+                     mercado (mercado como um todo), vagas (vagas não abertas), figuras (artigo PT/EN)
 data/ref/            ponte CBO→OIT, totais oficiais do MTE (validação), ipca.csv  [versionado]
 data/raw|interim|processed, outputs/                                             [fora do Git]
 tests/               teste ponta a ponta com dados simulados
