@@ -81,6 +81,39 @@ def natureza(mu: float, sd: float, frac_alta: float, grad: str) -> dict:
                      "que a IA generativa (que trabalha com texto, imagem e informação) faz pouco hoje."}
 
 
+def _aplicar_ajustes(ponte: pd.DataFrame) -> pd.DataFrame:
+    """Ajustes manuais da ponte, só no painel, para casos em que a tábua oficial leva a tarefas que a pessoa não
+    reconheceria (ver dados/ajustes_ponte.csv, com o motivo de cada um)."""
+    arq = RAIZ / "dados" / "ajustes_ponte.csv"
+    if not arq.exists():
+        return ponte
+    ponte = ponte.copy()
+    for a in pd.read_csv(arq, dtype=str).itertuples():
+        m = ponte.cbo2002.str.startswith(a.cbo_prefixo)
+        ponte.loc[m, "isco08"], ponte.loc[m, "ilo_nivel"] = a.isco08, "isco4"
+    return ponte
+
+
+def _traducoes() -> dict:
+    """Tarefas da OIT traduzidas (dados/tarefas_pt.csv, gerado uma vez por painelia.traduzir_tarefas)."""
+    arq = RAIZ / "dados" / "tarefas_pt.csv"
+    if not arq.exists():
+        return {}
+    t = pd.read_csv(arq, dtype=str)
+    return {(r.isco08, str(r.tarefa_id)): r.tarefa_pt for r in t.itertuples()}
+
+
+def _listas_tarefas(g: pd.DataFrame, pt: dict) -> tuple[list, list]:
+    """Mais e menos expostas, sem repetir tarefas quando a ocupação tem poucas."""
+    g = g.sort_values("escore")
+    n = len(g)
+    k = min(3, max(1, n // 2))
+    def fmt(df):
+        return [dict(tarefa=t.tarefa, tarefa_pt=pt.get((t.isco08, str(t.tarefa_id))), escore=round(t.escore, 2))
+                for t in df.itertuples()]
+    return fmt(g.tail(k)[::-1]), fmt(g.head(min(k, n - k)))
+
+
 def _tarefas_por_cbo(ponte: pd.DataFrame, tarefas: pd.DataFrame) -> dict[str, tuple[pd.DataFrame, str]]:
     por4 = {k: g for k, g in tarefas.groupby("isco08")}
     res: dict[str, tuple[pd.DataFrame, str]] = {}
@@ -117,6 +150,8 @@ def _pesos_admissoes() -> pd.Series | None:
 def construir(pasta_mte: Path | None = None, saida: Path | None = None) -> dict:
     ponte = pd.read_csv(REPO / "data" / "ref" / "ponte_cbo2002_isco08_ilo2025.csv", dtype={"cbo2002": str, "isco08": str})
     ponte["cbo2002"] = ponte.cbo2002.str.zfill(6)
+    ponte = _aplicar_ajustes(ponte)
+    pt = _traducoes()
     tarefas = pd.read_csv(RAIZ / "dados" / "ilo2025_tarefas_isco08.csv", dtype={"isco08": str})
     base = textos.carregar(pasta_mte)
     tit = textos.titulos(base)
@@ -126,15 +161,14 @@ def construir(pasta_mte: Path | None = None, saida: Path | None = None) -> dict:
         s = g.escore.to_numpy()
         mu, sd = float(s.mean()), float(s.std(ddof=1)) if len(s) > 1 else 0.0
         grad = gradiente(mu, sd)
-        g = g.sort_values("escore")
+        mais, menos = _listas_tarefas(g, pt)
         linhas.append(dict(
             cbo=cbo, titulo=tit.get(cbo), fonte_tarefas=fonte,
             tarefas_de_ocupacoes_vizinhas=not fonte.startswith("ISCO-08 "), media=round(mu, 3), dp=round(sd, 3),
             frac_tarefas_alta=round(float((s >= 0.5).mean()), 3), n_tarefas=len(s), gradiente=grad,
             gradiente_rotulo=GRADIENTE_PT[grad], exposicao=NIVEL[grad],
             natureza=natureza(mu, sd, float((s >= 0.5).mean()), grad),
-            tarefas_mais_expostas=[dict(tarefa=t.tarefa, escore=round(t.escore, 2)) for t in g.tail(3)[::-1].itertuples()],
-            tarefas_menos_expostas=[dict(tarefa=t.tarefa, escore=round(t.escore, 2)) for t in g.head(3).itertuples()],
+            tarefas_mais_expostas=mais, tarefas_menos_expostas=menos,
         ))
     df = pd.DataFrame(linhas)
     w = _pesos_admissoes()

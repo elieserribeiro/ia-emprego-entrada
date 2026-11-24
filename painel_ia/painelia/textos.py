@@ -26,11 +26,26 @@ def normalizar(s: str) -> str:
 
 
 def _ler_csv(p: Path) -> pd.DataFrame:
+    """Lê os CSVs do MTE (separador ';', sem aspas de escape).
+
+    Os arquivos têm aspas soltas dentro dos textos (ex.: Definir "blend") e ';' dentro do
+    último campo (ex.: "v.o.; i.m.; e.v."), o que quebra o parser do pandas. Por isso a
+    divisão é manual: o cabeçalho define o nº de colunas e o excedente fica na última.
+    """
     for enc in ("utf-8", "latin-1"):
         try:
-            return pd.read_csv(p, sep=None, engine="python", dtype=str, encoding=enc)
+            with open(p, encoding=enc, newline="") as f:
+                linhas = [l.rstrip("\r\n") for l in f]
         except UnicodeDecodeError:
             continue
+        linhas = [l for l in linhas if l.strip()]
+        cab = linhas[0].lstrip("\ufeff").split(";")
+        n = len(cab)
+        regs = []
+        for l in linhas[1:]:
+            c = l.split(";", n - 1)
+            regs.append(c + [None] * (n - len(c)))
+        return pd.DataFrame(regs, columns=cab, dtype=str)
     raise ValueError(f"não consegui ler {p}")
 
 

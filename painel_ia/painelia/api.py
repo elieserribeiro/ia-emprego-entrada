@@ -30,6 +30,25 @@ from . import armazenamento, busca, explicacao
 RAIZ = Path(__file__).resolve().parents[1]
 VERSAO = "1.0"
 
+# Ocupações que só aparecem nas sugestões quando a busca está bem segura (similaridade >= SENSIVEIS_MIN).
+# Evita sugerir, por ruído da busca, ocupações constrangedoras ou que revelem dados sensíveis (religião, etc.).
+# Quem digita o título (ou um sinônimo) delas continua encontrando-as, porque a similaridade fica alta.
+# O limite pode ser ajustado sem mexer no código: variável SENSIVEIS_MIN no Space.
+SENSIVEIS = {
+    "519805": "Profissional do sexo",
+    "263105": "Ministro de culto religioso",
+    "114305": "Dirigente e administrador de organização religiosa",
+    "516505": "Agente funerário",
+    "516605": "Operador de forno (serviços funerários)",
+    "328105": "Embalsamador",
+    "516705": "Astrólogo",
+    "516805": "Esotérico",
+    "420115": "Supervisor de coletadores de apostas e de jogos",
+    "421205": "Recebedor de apostas (loteria)",
+    "421210": "Recebedor de apostas (turfe)",
+}
+SENSIVEIS_MIN = float(os.environ.get("SENSIVEIS_MIN", "0.55"))
+
 
 class Faixa(str, Enum):
     a14_17 = "14-17"
@@ -62,6 +81,29 @@ class Percepcao(str, Enum):
     nao_sei = "nao_sei"
 
 
+class UsoIA(str, Enum):
+    nunca = "nunca"
+    as_vezes = "as_vezes"       # algumas vezes por mês
+    semanal = "semanal"         # toda semana
+    diario = "diario"           # todo dia
+
+
+class Sexo(str, Enum):
+    mulher = "mulher"
+    homem = "homem"
+    outro = "outro"
+    prefiro_nao = "prefiro_nao"
+
+
+class Raca(str, Enum):           # categorias do IBGE
+    branca = "branca"
+    preta = "preta"
+    parda = "parda"
+    amarela = "amarela"
+    indigena = "indigena"
+    prefiro_nao = "prefiro_nao"
+
+
 UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI",
        "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"]
 UF = Enum("UF", {u: u for u in UFS}, type=str)
@@ -78,7 +120,11 @@ class PedidoClassificacao(BaseModel):
     uf: UF
     tempo_funcao: Tempo
     percepcao: Percepcao | None = None
-    consentimento: bool = False
+    uso_ia: UsoIA | None = None
+    sexo: Sexo | None = None
+    raca: Raca | None = None
+    consentimento: bool = False             # uso anônimo das respostas na pesquisa
+    consentimento_sensivel: bool = False    # consentimento específico para raça/cor (LGPD, art. 11)
 
 
 def _carregar():
@@ -124,6 +170,8 @@ def sugerir(p: PedidoSugestao):
     _limitar()
     res = []
     for cbo, s in BUSCADOR.buscar(p.texto, k=8):
+        if cbo in SENSIVEIS and s < SENSIVEIS_MIN:
+            continue
         if cbo in OCUP and cbo not in [r["cbo"] for r in res]:
             res.append({"cbo": cbo, "titulo": TITULOS.get(cbo) or OCUP[cbo].get("titulo"), "similaridade": round(s, 3)})
         if len(res) == 3:
@@ -162,6 +210,29 @@ def _mensagem_perfil(nivel: str, faixa: str, tempo: str) -> str:
             "aumentar sua produtividade, não a substituí-la.")
 
 
+ARTIGO = ("Ribeiro (2026), Ponte estreita: o impacto da inteligência artificial no mercado de trabalho e na entrada "
+          "de jovens na carreira no Brasil, 2020–2026")
+
+
+def _achado_artigo(faixa: str) -> str:
+    """Frase com o achado do artigo para a faixa etária da pessoa (efeito médio no Brasil, não da ocupação)."""
+    g = (DADOS.get("evidencia_geral") or {})
+    pf = g.get("por_faixa", {})
+    e25 = (pf.get("25-29") or {}).get("adm", {}).get("efeito_pct_por_dp")
+    vg = g.get("vagas_25_29") or {}
+    mil = f"cerca de {vg['total'] // 1000} mil" if vg.get("total") else None
+    if faixa == "25-29" and e25 is not None:
+        t = (f"No Brasil, desde 2023, a contratação de jovens de 25 a 29 anos caiu nas ocupações mais expostas à IA: "
+             f"{abs(e25):.1f}% a menos para cada degrau de exposição, em relação aos adultos da mesma ocupação")
+        return t + (f", o que equivale a {mil} vagas a menos até o terceiro trimestre de 2026." if mil else ".")
+    if faixa in ("18-24", "14-17"):
+        return ("No Brasil, a contratação de jovens de 18 a 24 anos nas ocupações mais expostas à IA não mudou "
+                "depois do ChatGPT: o efeito estimado é zero. A queda aparece um degrau acima, entre os de 25 a 29 anos.")
+    return ("No Brasil, o número de pessoas empregadas nas ocupações mais expostas à IA não caiu até 2026. O que "
+            "mudou foi quem entra: essas ocupações passaram a contratar menos pessoas com diploma e menos jovens "
+            "de 25 a 29 anos.")
+
+
 @app.post("/classificar")
 def classificar(p: PedidoClassificacao):
     _limitar()
@@ -169,9 +240,14 @@ def classificar(p: PedidoClassificacao):
     if not o:
         raise HTTPException(404, "CBO sem dados de exposição")
     perfil = {"faixa_etaria": p.faixa_etaria.value, "escolaridade": p.escolaridade.value, "uf": p.uf.value,
-              "tempo_funcao": p.tempo_funcao.value, "percepcao": p.percepcao.value if p.percepcao else None}
+              "tempo_funcao": p.tempo_funcao.value, "percepcao": p.percepcao.value if p.percepcao else None,
+              "uso_ia": p.uso_ia.value if p.uso_ia else None, "sexo": p.sexo.value if p.sexo else None,
+              "raca": p.raca.value if p.raca else None}
     ev = _evidencia(o, perfil["faixa_etaria"], perfil["escolaridade"])
-    texto, origem = explicacao.explicar(o, {k: v for k, v in perfil.items() if k != "percepcao"}, ev)
+    # ao GPT vão só as categorias úteis para o texto; percepção, sexo e raça/cor nunca saem do servidor
+    para_texto = {k: v for k, v in perfil.items() if k not in ("percepcao", "sexo", "raca")}
+    achado = _achado_artigo(perfil["faixa_etaria"])
+    texto, origem = explicacao.explicar(o, para_texto, ev, achado)
     res = {
         "cbo": p.cbo, "titulo": TITULOS.get(p.cbo) or o.get("titulo"),
         "exposicao": {"nivel": o["exposicao"], "gradiente": o["gradiente"], "gradiente_rotulo": o["gradiente_rotulo"],
@@ -182,17 +258,19 @@ def classificar(p: PedidoClassificacao):
         "tarefas_de_ocupacoes_vizinhas": o.get("tarefas_de_ocupacoes_vizinhas", False),
         "evidencia_br": ev, "evidencia_geral": DADOS.get("evidencia_geral"),
         "mensagem_perfil": _mensagem_perfil(o["exposicao"], perfil["faixa_etaria"], perfil["tempo_funcao"]),
+        "achado_artigo": achado,
         "explicacao": texto, "explicacao_origem": origem,
         "aviso": ("Exposição não é previsão de perda de emprego: mede quanto das tarefas a IA generativa consegue "
                   "fazer tecnicamente (índice da OIT, 2025). O efeito real depende de adoção, custos e decisões "
                   "das empresas."),
-        "fontes": ["OIT — Gmyrek et al. (2025), WP 140, CC BY 4.0", "MTE — Novo CAGED (microdados)",
+        "fontes": [ARTIGO, "OIT — Gmyrek et al. (2025), WP 140, CC BY 4.0", "MTE — Novo CAGED (microdados)",
                    "MTE — Classificação Brasileira de Ocupações (CBO 2002)"],
     }
     gravado = False
     if p.consentimento:
         try:
-            gravado = armazenamento.gravar(armazenamento.registro(p.cbo, res, perfil))
+            gravado = armazenamento.gravar(armazenamento.registro(p.cbo, res, perfil,
+                                                                  sensivel=p.consentimento_sensivel))
         except Exception:
             gravado = False  # a falha de gravação não impede a pessoa de ver o resultado
     res["gravado"] = gravado

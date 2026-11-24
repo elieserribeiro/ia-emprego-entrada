@@ -77,13 +77,26 @@ def construir() -> dict:
         for (c, gr, esc), v in g.iterrows():
             if c in out:
                 out[c]["por_idade_escolaridade"].setdefault(gr, {})[esc] = _classe(v.a0, v.a1, r_mkt[gr])
-    mp = REPO / "outputs" / "tabelas" / "modelos_principais.csv"
+    tab = REPO / "outputs" / "tabelas"
+    mp = tab / "modelos_principais.csv"
     if mp.exists():
+        # efeitos do artigo (tripla diferença, pooled, com controles), na convenção do artigo: 100 × coeficiente
         m = pd.read_csv(mp)
-        m = m[(m.modelo == "tripla_pooled_com_controles") & (m.termo == "treat_post")].set_index("desfecho")
-        out["_geral"] = {y: {"coef": round(float(r.coef), 4), "ep": round(float(r.ep), 4), "p": round(float(r.p), 4),
-                             "efeito_pct_por_dp": round(100 * float(np.expm1(r.coef)), 1)}
-                         for y, r in m.iterrows()}
+        geral: dict = {"por_faixa": {}}
+        for faixa, modelo in (("18-24", "tripla_pooled_com_controles"), ("25-29", "tripla_25_29_pooled_com_controles")):
+            f = m[(m.modelo == modelo) & (m.termo == "treat_post")].set_index("desfecho")
+            geral["por_faixa"][faixa] = {y: {"coef": round(float(r.coef), 4), "ep": round(float(r.ep), 4),
+                                             "p": round(float(r.p), 4), "efeito_pct_por_dp": round(100 * float(r.coef), 1)}
+                                         for y, r in f.iterrows()}
+        vg = tab / "vagas_nao_abertas_resumo.csv"
+        if vg.exists():
+            v = pd.read_csv(vg).set_index("faixa")
+            if "25_29" in v.index:
+                r = v.loc["25_29"]
+                geral["vagas_25_29"] = {"total": int(round(r.nao_abertas_event, -3)), "ic_menor": int(round(r.ic_menor_event, -3)),
+                                        "ic_maior": int(round(r.ic_maior_event, -3)), "ate": str(int(r.ultimo)),
+                                        "pct_das_adm": round(float(r.pct_das_adm), 1)}
+        out["_geral"] = geral
     SAIDA.parent.mkdir(exist_ok=True)
     SAIDA.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     return out

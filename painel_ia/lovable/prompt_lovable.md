@@ -18,9 +18,9 @@
 > - não salve nada no Supabase a partir dessas páginas, porque a gravação (com consentimento) é feita pela API
 >   externa;
 > - não chame a OpenAI no site, porque a API externa faz isso;
-> - mantenha a caixa de consentimento desmarcada por padrão.
+> - mantenha as duas caixas de consentimento desmarcadas por padrão e a segunda (raça/cor) separada da primeira.
 >
-> [cole aqui o texto de aviso_privacidade.md, já preenchido]
+> [cole aqui o texto de aviso_privacidade.md]
 
 ---
 

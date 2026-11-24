@@ -12,13 +12,21 @@ create table if not exists public.respostas (
   escolaridade  text not null check (escolaridade in ('fundamental','medio','superior','pos')),
   uf            text not null check (uf ~ '^[A-Z]{2}$'),
   tempo_funcao  text not null check (tempo_funcao in ('menos_1','1_3','3_10','mais_10')),
-  percepcao     text check (percepcao in ('nada','pouco','moderado','muito','nao_sei'))
+  percepcao     text check (percepcao in ('nada','pouco','moderado','muito','nao_sei')),
+  uso_ia        text check (uso_ia in ('nunca','as_vezes','semanal','diario')),
+  sexo          text check (sexo in ('mulher','homem','outro','prefiro_nao')),
+  raca          text check (raca in ('branca','preta','parda','amarela','indigena','prefiro_nao'))
+                -- dado sensível (LGPD, art. 11): a API só grava com o consentimento específico
 );
 
 -- RLS ligada e SEM políticas: o público (chave anon do site) não lê nem grava.
 -- Só a API, com a service key guardada no servidor, insere e lê.
 alter table public.respostas enable row level security;
 revoke all on public.respostas from anon, authenticated;
+-- Só o servidor (service_role, usado pela API) acessa a tabela. Necessário quando o projeto foi criado com
+-- "Grant API access to new tables automatically" desmarcado.
+grant select, insert on public.respostas to service_role;
+grant usage, select on all sequences in schema public to service_role;
 
 -- Relatório já com supressão k >= 10 (para consultas manuais no painel do Supabase).
 create or replace view public.relatorio_exposicao_idade_k10 with (security_invoker = true) as
@@ -28,5 +36,5 @@ group by exposicao, faixa_etaria
 having count(*) >= 10;
 revoke all on public.relatorio_exposicao_idade_k10 from anon, authenticated;
 
--- Retenção (opcional): apagar respostas com mais de 5 anos.
+-- Retenção: 5 anos (aviso de privacidade). Rode periodicamente, ou agende com pg_cron:
 -- delete from public.respostas where mes < to_char(now() - interval '5 years', 'YYYY-MM');

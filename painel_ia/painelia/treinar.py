@@ -80,23 +80,31 @@ def _tfidf(base):
     return busca.BuscadorTfidf.treinar(docs.cbo6.tolist(), docs.documento.tolist())
 
 
-def _st(base_treino, modelo_base, epocas, lote, pd_prefix, pq_prefix):
+def _st(base_treino, modelo_base, epocas, lote, pd_prefix, pq_prefix, sem_atividades=False, max_seq=None):
     import torch
     from sentence_transformers import InputExample, SentenceTransformer, losses
-    from torch.utils.data import DataLoader
 
     disp = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"  ajuste fino de {modelo_base} em {disp} ({epocas} época(s))")
     modelo = SentenceTransformer(modelo_base, device=disp)
+    if max_seq:
+        modelo.max_seq_length = max_seq
     docs = textos.documentos(base_treino, prefixo=pd_prefix)
     doc = dict(zip(docs.cbo6, docs.documento))
-    pares = base_treino[base_treino.tipo.isin(["sinonimo", "atividade", "titulo"]) & base_treino.cbo6.isin(doc)]
+    tipos = ["sinonimo", "titulo"] if sem_atividades else ["sinonimo", "atividade", "titulo"]
+    pares = base_treino[base_treino.tipo.isin(tipos) & base_treino.cbo6.isin(doc)]
     ex = [InputExample(texts=[pq_prefix + r.texto, doc[r.cbo6]]) for r in pares.itertuples()]
     print(f"  {len(ex)} pares de treino")
-    dl = DataLoader(ex, shuffle=True, batch_size=lote)
+    # Cada CBO aparece em dezenas de pares; num lote comum o mesmo documento cairia várias vezes e seria
+    # tratado como "resposta errada" para si mesmo. NoDuplicatesDataLoader evita textos repetidos no lote.
+    try:
+        from sentence_transformers.datasets import NoDuplicatesDataLoader
+    except ImportError:
+        from sentence_transformers.sentence_transformer.datasets import NoDuplicatesDataLoader
+    dl = NoDuplicatesDataLoader(ex, batch_size=lote)
     perda = losses.MultipleNegativesRankingLoss(modelo)
     modelo.fit(train_objectives=[(dl, perda)], epochs=epocas, warmup_steps=int(0.1 * len(dl) * epocas),
-               show_progress_bar=True)
+               show_progress_bar=True, use_amp=(disp == "cuda"))
     return modelo
 
 
@@ -107,6 +115,10 @@ def main(argv=None):
     ap.add_argument("--epocas", type=int, default=2)
     ap.add_argument("--lote", type=int, default=64)
     ap.add_argument("--pasta-mte", default=None)
+    ap.add_argument("--sem-atividades", action="store_true",
+                    help="treina só com títulos e sinônimos como consulta (~10 mil pares, bem mais rápido)")
+    ap.add_argument("--max-seq", type=int, default=None,
+                    help="limita o tamanho (em tokens) dos textos no treino, ex.: 256; acelera e economiza memória")
     a = ap.parse_args(argv)
     e5 = "e5" in a.modelo_base
     pq, pdoc = ("query: ", "passage: ") if e5 else ("", "")
@@ -129,7 +141,7 @@ def main(argv=None):
                                         docs.documento.tolist(), pq)
         zero.nome = "st-0"
         relatorio += [avaliar(zero, q_val, "sinônimos retidos"), avaliar(zero, q_teste, "consultas de usuário")]
-        modelo = _st(treino, a.modelo_base, a.epocas, a.lote, pdoc, pq)
+        modelo = _st(treino, a.modelo_base, a.epocas, a.lote, pdoc, pq, a.sem_atividades, a.max_seq)
         ajust = busca.BuscadorST.treinar(modelo, docs.cbo6.tolist(), docs.documento.tolist(), pq)
         relatorio += [avaliar(ajust, q_val, "sinônimos retidos"), avaliar(ajust, q_teste, "consultas de usuário")]
 

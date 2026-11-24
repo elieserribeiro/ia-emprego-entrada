@@ -26,5 +26,6 @@ for idx in ("indice_st", "indice_tfidf"):
 (dest / ".gitattributes").write_text("*.safetensors filter=lfs diff=lfs merge=lfs -text\n"
                                      "*.bin filter=lfs diff=lfs merge=lfs -text\n"
                                      "*.npy filter=lfs diff=lfs merge=lfs -text\n"
-                                     "*.pkl filter=lfs diff=lfs merge=lfs -text\n")
+                                     "*.pkl filter=lfs diff=lfs merge=lfs -text\n"
+                                     "tokenizer.json filter=lfs diff=lfs merge=lfs -text\n")
 print(f"pasta do Space pronta em {dest}")

@@ -94,24 +94,20 @@ alternativa, com o mesmo Dockerfile, mudando a porta para `$PORT`.
 10 respostas são suprimidas. Quando só uma célula seria suprimida, a menor visível também é, para não
 reconstruir por diferença.
 
-## LGPD e ética: o que o código garante e o que você precisa fazer
+## LGPD: o que o código garante
 
-O código garante:
-- **Consentimento e opt-in:** a caixa vem desmarcada, e sem consentimento nada é gravado.
-- **Minimização:** grava só os campos categóricos (`armazenamento.CAMPOS`), e o mês sem dia.
-- **O que nunca é gravado:** texto livre, IP, e-mail, identificadores de navegador. Também não há log de acesso
-  (`--no-access-log`).
-- **Chaves:** ficam no servidor.
-- **OpenAI:** recebe só dados categóricos e públicos, com `store=false`.
-- **Supabase:** RLS ligada e sem acesso público.
-- **Relatórios:** k ≥ 10.
+Projeto de pesquisa **independente** (sem vínculo institucional). Responsável pelos dados: Eliéser Ribeiro,
+horizontedigital.ai@gmail.com. Aviso completo: `lovable/aviso_privacidade.md` (vira a página `/privacidade`).
 
-O que você precisa fazer:
-- Preencher `lovable/aviso_privacidade.md`: controlador, contato, DPO, retenção.
-- **Consultar o DPO e o CEP da universidade** antes de abrir a coleta. A Resolução CNS 510/2016 costuma exigir
-  registro ou dispensa formal pelo CEP mesmo para dados anônimos.
-- Usar a pergunta de percepção, respondida antes de ver o resultado, como dado da pesquisa: ela permite
-  replicar no Brasil a comparação entre percepção e exposição de Hartley et al. (2026).
+- **Perguntas:** cargo (texto livre, nunca guardado), ocupação confirmada, faixa etária, escolaridade, UF, tempo na
+  função, uso de IA no trabalho, percepção (antes do resultado), sexo e raça/cor (estas duas opcionais).
+- **Consentimento em duas camadas:** a caixa geral vem desmarcada, e sem ela nada é gravado. Raça/cor é dado
+  sensível (LGPD, art. 11) e só é gravada com uma segunda caixa específica (`consentimento_sensivel`).
+- **Minimização:** grava só campos categóricos (`armazenamento.CAMPOS`) e o mês, sem dia.
+- **Nunca gravado:** texto livre, IP, e-mail, identificadores de navegador. Sem log de acesso (`--no-access-log`).
+- **OpenAI:** recebe só a ocupação, dados públicos e categorias do perfil (sem percepção, sexo ou raça/cor), com
+  `store=false`. A chave fica no servidor.
+- **Supabase:** RLS ligada e sem acesso público. **Relatórios:** k ≥ 10. **Retenção:** 5 anos (`schema.sql`).
 
 ## Limites que o painel deixa explícitos
 - **Exposição × efeito:** o índice da OIT mede capacidade técnica da IA nas tarefas, não demissões.

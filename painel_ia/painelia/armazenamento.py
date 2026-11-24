@@ -20,20 +20,25 @@ from datetime import date
 import pandas as pd
 
 CAMPOS = ["mes", "cbo", "cbo_familia", "exposicao", "natureza", "sinal_br", "faixa_etaria", "escolaridade", "uf",
-          "tempo_funcao", "percepcao"]
+          "tempo_funcao", "percepcao", "uso_ia", "sexo", "raca"]
+PERFIL = ("faixa_etaria", "escolaridade", "uf", "tempo_funcao", "percepcao", "uso_ia", "sexo", "raca")
 K_MIN = 10
 
 
-def registro(cbo: str, resultado: dict, perfil: dict) -> dict:
-    """Monta o registro permitido. Qualquer campo fora de CAMPOS é descartado aqui."""
+def registro(cbo: str, resultado: dict, perfil: dict, sensivel: bool = False) -> dict:
+    """Monta o registro permitido. Qualquer campo fora de CAMPOS é descartado aqui.
+
+    Raça/cor é dado sensível (LGPD, art. 11): só é gravada com o consentimento específico (`sensivel=True`)."""
     r = {
         "mes": date.today().strftime("%Y-%m"),
         "cbo": cbo, "cbo_familia": cbo[:4],
         "exposicao": resultado["exposicao"]["nivel"],
         "natureza": resultado["natureza"]["tipo"],
         "sinal_br": (resultado.get("evidencia_br") or {}).get("classe"),
-        **{k: perfil.get(k) for k in ("faixa_etaria", "escolaridade", "uf", "tempo_funcao", "percepcao")},
+        **{k: perfil.get(k) for k in PERFIL},
     }
+    if not sensivel:
+        r["raca"] = None
     return {k: r.get(k) for k in CAMPOS}
 
 
@@ -62,10 +67,18 @@ def gravar(reg: dict) -> bool:
     import httpx
     url = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/respostas"
     chave = os.environ["SUPABASE_SERVICE_KEY"]
-    r = httpx.post(url, json=reg, timeout=10, headers={
-        "apikey": chave, "Authorization": f"Bearer {chave}", "Prefer": "return=minimal"})
+    r = httpx.post(url, json=reg, timeout=10, headers=_cab_supabase(chave, {"Prefer": "return=minimal"}))
     r.raise_for_status()
     return True
+
+
+def _cab_supabase(chave: str, extra: dict | None = None) -> dict:
+    """Cabeçalhos do PostgREST. Chaves antigas (service_role, JWT 'eyJ...') vão também em Authorization;
+    as chaves novas ('sb_secret_...') não são JWT e vão só em apikey."""
+    h = {"apikey": chave}
+    if chave.startswith("eyJ"):
+        h["Authorization"] = f"Bearer {chave}"
+    return {**h, **(extra or {})}
 
 
 def _todas() -> pd.DataFrame:
@@ -79,8 +92,7 @@ def _todas() -> pd.DataFrame:
         url = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/respostas?select=" + ",".join(CAMPOS)
         linhas, ini = [], 0
         while True:  # paginação do PostgREST
-            r = httpx.get(url, timeout=30, headers={"apikey": chave, "Authorization": f"Bearer {chave}",
-                                                   "Range": f"{ini}-{ini + 9999}"})
+            r = httpx.get(url, timeout=30, headers=_cab_supabase(chave, {"Range": f"{ini}-{ini + 9999}"}))
             r.raise_for_status()
             lote = r.json()
             linhas += lote

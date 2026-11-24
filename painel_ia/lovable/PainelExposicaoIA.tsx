@@ -3,7 +3,7 @@
 // O site NUNCA fala com a OpenAI nem guarda nada: só chama a API, que tem as chaves.
 import { useState } from "react";
 
-const API = (import.meta as any).env?.VITE_PAINEL_API_URL ?? "";
+const API = (import.meta as any).env?.VITE_PAINEL_API_URL ?? "https://elieser-ia-exposicao-ia.hf.space";
 
 type Sugestao = { cbo: string; titulo: string; similaridade: number };
 type Tarefa = { tarefa: string; escore: number };
@@ -14,7 +14,7 @@ type Resultado = {
   tarefas_mais_expostas: Tarefa[]; tarefas_menos_expostas: Tarefa[];
   evidencia_br: null | { classe: string; variacao_relativa_pct?: number; confianca?: string; grupo_idade: string;
     janelas?: { antes: string; recente: string } };
-  mensagem_perfil: string; explicacao: string; aviso: string; fontes: string[]; gravado: boolean;
+  mensagem_perfil: string; achado_artigo: string; explicacao: string; aviso: string; fontes: string[]; gravado: boolean;
 };
 
 const FAIXAS = ["14-17", "18-24", "25-29", "30-39", "40-49", "50+"];
@@ -23,6 +23,10 @@ const ESCOLAR = [["fundamental", "Até o fundamental"], ["medio", "Médio comple
 const TEMPO = [["menos_1", "Menos de 1 ano"], ["1_3", "1 a 3 anos"], ["3_10", "3 a 10 anos"], ["mais_10", "Mais de 10 anos"]];
 const UFS = "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split(" ");
 const PERCEPCAO = [["nada", "Nada"], ["pouco", "Pouco"], ["moderado", "Moderadamente"], ["muito", "Muito"], ["nao_sei", "Não sei"]];
+const USO_IA = [["nunca", "Nunca"], ["as_vezes", "Algumas vezes por mês"], ["semanal", "Toda semana"], ["diario", "Todo dia"]];
+const SEXO = [["mulher", "Mulher"], ["homem", "Homem"], ["outro", "Outro"], ["prefiro_nao", "Prefiro não responder"]];
+const RACA = [["branca", "Branca"], ["preta", "Preta"], ["parda", "Parda"], ["amarela", "Amarela"], ["indigena", "Indígena"],
+  ["prefiro_nao", "Prefiro não responder"]];
 const COR = { alta: "bg-orange-100 text-orange-900 border-orange-300", media: "bg-amber-50 text-amber-900 border-amber-300",
   baixa: "bg-emerald-50 text-emerald-900 border-emerald-300" } as const;
 const NOME = { alta: "Alta", media: "Média", baixa: "Baixa" } as const;
@@ -39,9 +43,12 @@ export default function PainelExposicaoIA() {
   const [texto, setTexto] = useState("");
   const [sugestoes, setSugestoes] = useState<Sugestao[]>([]);
   const [cbo, setCbo] = useState<Sugestao | null>(null);
-  const [perfil, setPerfil] = useState({ faixa_etaria: "", escolaridade: "", uf: "", tempo_funcao: "" });
+  const [perfil, setPerfil] = useState({ faixa_etaria: "", escolaridade: "", uf: "", tempo_funcao: "", uso_ia: "" });
   const [percepcao, setPercepcao] = useState<string>("");
-  const [consentimento, setConsentimento] = useState(false); // desmarcado por padrão (LGPD)
+  const [sexo, setSexo] = useState<string>("");
+  const [raca, setRaca] = useState<string>("");
+  const [consentimento, setConsentimento] = useState(false);          // desmarcado por padrão (LGPD)
+  const [consentimentoRaca, setConsentimentoRaca] = useState(false);  // dado sensível: caixa própria (LGPD, art. 11)
   const [res, setRes] = useState<Resultado | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState("");
@@ -60,7 +67,8 @@ export default function PainelExposicaoIA() {
     setErro(""); setCarregando(true);
     try {
       const r = await post<Resultado>("/classificar", { cbo: cbo.cbo, ...perfil,
-        percepcao: percepcao || null, consentimento });
+        percepcao: percepcao || null, sexo: sexo || null, raca: raca || null,
+        consentimento, consentimento_sensivel: consentimento && consentimentoRaca });
       setRes(r); setEtapa(4);
       setTexto(""); // o texto livre não fica nem na memória da página
     } catch { setErro("Não consegui calcular agora. Tente de novo em instantes."); }
@@ -90,6 +98,14 @@ export default function PainelExposicaoIA() {
           <p className="text-xs text-slate-500">
             Não escreva seu nome, empresa ou dados pessoais. Este texto serve só para sugerir a ocupação e não é guardado.
           </p>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+            <p className="font-medium">Sobre os seus dados</p>
+            <p className="mt-1">Este painel é um projeto de pesquisa independente. Você pode usá-lo sem informar nada que
+              identifique você. No fim, vamos perguntar se você autoriza o uso <strong>anônimo</strong> das suas
+              respostas na pesquisa. É opcional, e você vê o resultado mesmo sem autorizar. Nunca guardamos o texto que
+              você digita, seu nome, e-mail ou IP. <a className="underline" href="/privacidade" target="_blank"
+              rel="noreferrer">Aviso de privacidade completo</a>.</p>
+          </div>
           <button className="rounded-lg bg-slate-900 px-4 py-2 text-white disabled:opacity-40"
             disabled={texto.trim().length < 3 || carregando} onClick={sugerir}>
             {carregando ? "Buscando…" : "Encontrar minha ocupação"}
@@ -134,6 +150,18 @@ export default function PainelExposicaoIA() {
                 onChange={(e) => setPerfil({ ...perfil, tempo_funcao: e.target.value })}>
                 <option value="">Escolha</option>{TEMPO.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
               </select></label>
+            <label className="text-sm sm:col-span-2">Com que frequência você usa IA (ChatGPT, Gemini, Copilot etc.) no trabalho?
+              <select className={caixa} value={perfil.uso_ia} onChange={(e) => setPerfil({ ...perfil, uso_ia: e.target.value })}>
+                <option value="">Escolha</option>{USO_IA.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+              </select></label>
+            <label className="text-sm">Sexo <span className="text-slate-500">(opcional)</span>
+              <select className={caixa} value={sexo} onChange={(e) => setSexo(e.target.value)}>
+                <option value="">Escolha</option>{SEXO.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+              </select></label>
+            <label className="text-sm">Raça/cor <span className="text-slate-500">(opcional)</span>
+              <select className={caixa} value={raca} onChange={(e) => setRaca(e.target.value)}>
+                <option value="">Escolha</option>{RACA.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+              </select></label>
           </div>
 
           <fieldset className="space-y-1">
@@ -149,15 +177,32 @@ export default function PainelExposicaoIA() {
             </div>
           </fieldset>
 
-          <label className="flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-sm">
-            <input type="checkbox" className="mt-1" checked={consentimento} onChange={(e) => setConsentimento(e.target.checked)} />
-            <span>
-              Autorizo o uso <strong>anônimo</strong> da ocupação escolhida, do resultado e das respostas acima (faixa etária,
-              escolaridade, UF, tempo na função e percepção) na pesquisa sobre IA e trabalho. O texto que digitei não é
-              guardado. <a className="underline" href="/privacidade" target="_blank" rel="noreferrer">Aviso de privacidade</a>.
-              Opcional: você vê o resultado mesmo sem marcar.
-            </span>
-          </label>
+          <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+            <label className="flex items-start gap-2">
+              <input type="checkbox" className="mt-1" checked={consentimento}
+                onChange={(e) => { setConsentimento(e.target.checked); if (!e.target.checked) setConsentimentoRaca(false); }} />
+              <span>
+                Autorizo o uso <strong>anônimo</strong> da ocupação escolhida, do resultado e das respostas acima (faixa
+                etária, escolaridade, estado, tempo na função, percepção, uso de IA e sexo) na pesquisa sobre IA e
+                trabalho, por até 5 anos. Não é guardado nada que me identifique, nem o texto que digitei.
+              </span>
+            </label>
+            {raca && raca !== "prefiro_nao" && (
+              <label className={`flex items-start gap-2 ${consentimento ? "" : "opacity-50"}`}>
+                <input type="checkbox" className="mt-1" disabled={!consentimento} checked={consentimentoRaca}
+                  onChange={(e) => setConsentimentoRaca(e.target.checked)} />
+                <span>
+                  Autorizo também, <strong>de forma específica</strong>, o uso anônimo da minha <strong>raça/cor</strong>,
+                  que é um dado sensível pela LGPD. Sem esta caixa, a raça/cor não é guardada.
+                </span>
+              </label>
+            )}
+            <p className="text-xs text-slate-600">
+              As duas caixas são opcionais: você vê o resultado mesmo sem marcar. Resultados só são divulgados para grupos
+              com 10 ou mais respostas. Dúvidas: horizontedigital.ai@gmail.com.{" "}
+              <a className="underline" href="/privacidade" target="_blank" rel="noreferrer">Aviso de privacidade</a>.
+            </p>
+          </div>
 
           <button className="rounded-lg bg-slate-900 px-4 py-2 text-white disabled:opacity-40"
             disabled={!perfilOk || carregando} onClick={classificar}>
@@ -169,44 +214,24 @@ export default function PainelExposicaoIA() {
       {etapa === 4 && res && (
         <section className="space-y-4">
           <h2 className="text-xl font-semibold">{res.titulo}</h2>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className={`rounded-xl border p-3 ${COR[res.exposicao.nivel]}`}>
-              <p className="text-xs uppercase tracking-wide">Exposição à IA</p>
-              <p className="text-2xl font-semibold">{NOME[res.exposicao.nivel]}</p>
-              <p className="text-xs">{res.exposicao.gradiente_rotulo} (OIT, 2025)</p>
-              <p className="mt-1 text-xs">Mais exposta que {res.exposicao.percentil}% das ocupações</p>
-            </div>
-            <div className="rounded-xl border border-slate-300 p-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Natureza provável</p>
-              <p className="font-semibold">{res.natureza.rotulo}</p>
-            </div>
-            <div className="rounded-xl border border-slate-300 p-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Contratações no Brasil</p>
-              {res.evidencia_br && res.evidencia_br.classe !== "dados insuficientes" ? (<>
-                <p className="font-semibold capitalize">{res.evidencia_br.classe}</p>
-                <p className="text-xs">{res.evidencia_br.grupo_idade} anos, frente ao mercado
-                  {res.evidencia_br.janelas ? ` (${res.evidencia_br.janelas.antes} → ${res.evidencia_br.janelas.recente})` : ""};
-                  confiança {res.evidencia_br.confianca}</p>
-              </>) : <p className="text-sm text-slate-500">Dados insuficientes para o seu perfil</p>}
-            </div>
+          {/* o resultado é um texto corrido, em 5 parágrafos; o trecho entre ** ** no início de cada um vai em negrito */}
+          <div className="space-y-4 leading-relaxed">
+            {res.explicacao.split(/\n\s*\n/).map((par, i) => {
+              const m = par.match(/^\*\*(.+?)\*\*\s*(.*)$/s);
+              return <p key={i}>{m ? <><strong>{m[1]}</strong> {m[2]}</> : par}</p>;
+            })}
           </div>
-
-          <div className="space-y-3 whitespace-pre-line leading-relaxed">{res.explicacao}</div>
-          <p className="rounded-lg bg-slate-50 p-3 text-sm">{res.mensagem_perfil}</p>
-
-          <details className="text-sm">
-            <summary className="cursor-pointer font-medium">Tarefas mais e menos expostas (OIT, em inglês)</summary>
-            <ul className="mt-2 list-disc pl-5">
-              {res.tarefas_mais_expostas.map((t) => <li key={t.tarefa}>{t.tarefa} <em>({t.escore})</em></li>)}
-            </ul>
-            <ul className="mt-2 list-disc pl-5 text-slate-600">
-              {res.tarefas_menos_expostas.map((t) => <li key={t.tarefa}>{t.tarefa} <em>({t.escore})</em></li>)}
-            </ul>
-          </details>
-
-          <p className="text-xs text-slate-500">{res.aviso} Fontes: {res.fontes.join("; ")}.</p>
-          <button className="text-sm underline" onClick={() => { setRes(null); setCbo(null); setPercepcao("");
-            setConsentimento(false); setEtapa(1); }}>Fazer outra consulta</button>
+          <p className="text-xs text-slate-500">
+            {res.aviso} Fontes: {res.fontes.join("; ")}.{" "}
+            <a className="underline" href="https://github.com/elieserribeiro/ia-emprego-entrada/blob/main/artigo/ponte_estreita_PT.pdf"
+              target="_blank" rel="noreferrer">Leia a pesquisa completa</a>.
+          </p>
+          <p className="text-xs text-slate-500">
+            {res.gravado ? "Suas respostas foram registradas de forma anônima. Obrigado por contribuir com a pesquisa."
+              : "Nenhuma resposta foi guardada."}
+          </p>
+          <button className="text-sm underline" onClick={() => { setRes(null); setCbo(null); setPercepcao(""); setSexo("");
+            setRaca(""); setConsentimento(false); setConsentimentoRaca(false); setEtapa(1); }}>Fazer outra consulta</button>
         </section>
       )}
     </div>

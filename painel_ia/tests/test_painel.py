@@ -36,7 +36,8 @@ def cliente(tmp_path, monkeypatch):
     return TestClient(api.app), db
 
 
-PERFIL = {"faixa_etaria": "18-24", "escolaridade": "superior", "uf": "RN", "tempo_funcao": "menos_1"}
+PERFIL = {"faixa_etaria": "18-24", "escolaridade": "superior", "uf": "RN", "tempo_funcao": "menos_1",
+          "uso_ia": "semanal", "sexo": "mulher", "raca": "parda"}
 
 
 def test_fluxo_completo_e_privacidade(cliente):
@@ -47,7 +48,8 @@ def test_fluxo_completo_e_privacidade(cliente):
     assert 1 <= len(s) <= 3 and all(len(x["cbo"]) == 6 for x in s)
     # sem consentimento: nada gravado
     r = c.post("/classificar", json={"cbo": "411010", **PERFIL, "percepcao": "muito"}).json()
-    assert r["exposicao"]["nivel"] == "alta" and r["natureza"]["tipo"] == "substituicao"
+    assert r["exposicao"]["nivel"] == "alta" and r["natureza"]["tipo"] in ("substituicao", "transformacao")
+    assert r["explicacao"].count("**") == 10, "5 parágrafos, cada um com o início em negrito"
     assert r["explicacao_origem"] == "reserva" and r["gravado"] is False
     assert not db.exists() or sqlite3.connect(db).execute(
         "SELECT count(*) FROM sqlite_master WHERE name='respostas'").fetchone()[0] == 0 or \
@@ -61,6 +63,18 @@ def test_fluxo_completo_e_privacidade(cliente):
     assert len(linhas) == 1
     assert set(cols) == set(__import__("painelia.armazenamento", fromlist=["CAMPOS"]).CAMPOS)
     assert "XYZSEGREDO" not in json.dumps(linhas) and len(linhas[0][0]) == 7  # mês AAAA-MM, sem dia
+    reg = dict(zip(cols, linhas[0]))
+    assert reg["uso_ia"] == "semanal" and reg["sexo"] == "mulher"
+    assert reg["raca"] is None, "raça/cor só é gravada com o consentimento específico"
+    # com o consentimento específico: raça/cor gravada
+    c.post("/classificar", json={"cbo": "411010", **PERFIL, "consentimento": True, "consentimento_sensivel": True})
+    assert con.execute("SELECT raca FROM respostas").fetchall()[-1][0] == "parda"
+    # o consentimento específico sozinho não grava nada
+    n = con.execute("SELECT count(*) FROM respostas").fetchone()[0]
+    c.post("/classificar", json={"cbo": "411010", **PERFIL, "consentimento_sensivel": True})
+    assert con.execute("SELECT count(*) FROM respostas").fetchone()[0] == n
+    assert c.post("/classificar", json={"cbo": "411010", **PERFIL, "raca": "verde"}).status_code == 422
+    assert "achado_artigo" in r and r["achado_artigo"]
 
 
 def test_validacao_e_relatorio_k10(cliente):

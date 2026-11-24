@@ -26,3 +26,8 @@ __pycache__/
 *.env
 .env.*
 !.env.example
+
+exposicao-ia/
+
+meu-space/
+painel_ia/painel_ia_colab.zip
